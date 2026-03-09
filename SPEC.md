@@ -1,4 +1,4 @@
-# LLM-Manager — Product Spec
+# OnDeckLLM — Product Spec
 # Status: Planning → v1.0
 # Owner: Canonflip (canonflip.com)
 # License: MIT
@@ -11,8 +11,8 @@ Localhost dashboard for managing LLM providers, model routing, and usage analyti
 
 ## Install
 ```bash
-npm i -g llm-manager
-llm-manager          # opens localhost:3900
+npm i -g ondeckllm
+ondeckllm          # opens localhost:3900
 ```
 
 ## v1.0 Features
@@ -104,7 +104,7 @@ llm-manager          # opens localhost:3900
 
 ## Ecosystem Integration
 - **CloakClaw** — Privacy Mode profile auto-enables CloakClaw proxy
-  - LLM-Manager → CloakClaw proxy → Cloud LLM
+  - OnDeckLLM → CloakClaw proxy → Cloud LLM
   - Cross-promotion in both UIs and landing pages
 - **OpenClaw** — Direct config sync, skill on ClawHub
 - **Future Canonflip products** — shared affiliate/referral infrastructure
@@ -116,9 +116,9 @@ llm-manager          # opens localhost:3900
 - Storage: Local JSON/SQLite (no external DB)
 - Package: npm (global install)
 - License: MIT
-- Org: github.com/canonflip/llm-manager
+- Org: github.com/canonflip/ondeckllm
 
-## Website (llm-manager TBD domain)
+## Website (ondeckllm TBD domain)
 - Dark theme, modern, developer-sexy
 - Hero: animated dashboard mockup showing model routing in action
 - "How it works" section: 3 steps (Install → Configure → Optimize)

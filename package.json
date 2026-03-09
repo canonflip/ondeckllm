@@ -1,0 +1,20 @@
+{
+  "name": "ondeckllm",
+  "version": "1.1.0",
+  "description": "Localhost dashboard for managing LLM providers, model routing, and batting-order fallback chains",
+  "type": "module",
+  "main": "src/server.js",
+  "bin": {
+    "ondeckllm": "./src/cli.js"
+  },
+  "scripts": {
+    "start": "node src/server.js",
+    "dev": "node src/server.js"
+  },
+  "keywords": ["llm", "ai", "dashboard", "model-routing", "openai", "anthropic", "ollama", "ondeckllm"],
+  "author": "Canonflip",
+  "license": "MIT",
+  "dependencies": {
+    "express": "^4.21.0"
+  }
+}
