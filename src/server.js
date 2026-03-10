@@ -340,26 +340,26 @@ app.post('/api/providers/test-all', async (req, res) => {
 // ── Ollama Model Browser API ──
 
 const OLLAMA_LIBRARY = [
-  { name: 'llama3.2', description: 'Meta Llama 3.2 — latest small & medium models', size: '2B-90B' },
-  { name: 'llama3.1', description: 'Meta Llama 3.1 — flagship open model', size: '8B-405B' },
-  { name: 'codellama', description: 'Code-specialized Llama model', size: '7B-70B' },
-  { name: 'mistral', description: 'Mistral 7B — fast and capable', size: '7B' },
-  { name: 'mixtral', description: 'Mixtral MoE — high quality mixture of experts', size: '8x7B-8x22B' },
-  { name: 'phi3', description: 'Microsoft Phi-3 — small but powerful', size: '3.8B-14B' },
-  { name: 'gemma2', description: 'Google Gemma 2 — efficient open model', size: '2B-27B' },
-  { name: 'qwen2.5', description: 'Alibaba Qwen 2.5 — multilingual powerhouse', size: '0.5B-72B' },
-  { name: 'deepseek-coder-v2', description: 'DeepSeek Coder V2 — coding specialist', size: '16B-236B' },
-  { name: 'deepseek-r1', description: 'DeepSeek R1 — reasoning model', size: '1.5B-671B' },
-  { name: 'command-r', description: 'Cohere Command R — RAG optimized', size: '35B' },
-  { name: 'starcoder2', description: 'BigCode StarCoder2 — code generation', size: '3B-15B' },
-  { name: 'nomic-embed-text', description: 'Nomic Embed — text embeddings', size: '137M' },
-  { name: 'llava', description: 'LLaVA — multimodal vision+language', size: '7B-34B' },
-  { name: 'dolphin-mixtral', description: 'Dolphin Mixtral — uncensored MoE', size: '8x7B' },
-  { name: 'neural-chat', description: 'Intel Neural Chat — fine-tuned for chat', size: '7B' },
-  { name: 'solar', description: 'Upstage Solar — merged architecture', size: '10.7B' },
-  { name: 'vicuna', description: 'Vicuna — fine-tuned LLaMA for chat', size: '7B-33B' },
-  { name: 'nous-hermes2', description: 'Nous Hermes 2 — general purpose', size: '7B-34B' },
-  { name: 'yi', description: 'Yi — bilingual open model by 01.AI', size: '6B-34B' }
+  { name: 'llama3.2', description: 'Meta Llama 3.2 — latest small & medium models', size: '2B-90B', disk: '1.3 GB' },
+  { name: 'llama3.1', description: 'Meta Llama 3.1 — flagship open model', size: '8B-405B', disk: '4.7 GB' },
+  { name: 'codellama', description: 'Code-specialized Llama model', size: '7B-70B', disk: '3.8 GB' },
+  { name: 'mistral', description: 'Mistral 7B — fast and capable', size: '7B', disk: '4.1 GB' },
+  { name: 'mixtral', description: 'Mixtral MoE — high quality mixture of experts', size: '8x7B-8x22B', disk: '26 GB' },
+  { name: 'phi3', description: 'Microsoft Phi-3 — small but powerful', size: '3.8B-14B', disk: '2.2 GB' },
+  { name: 'gemma2', description: 'Google Gemma 2 — efficient open model', size: '2B-27B', disk: '1.6 GB' },
+  { name: 'qwen2.5', description: 'Alibaba Qwen 2.5 — multilingual powerhouse', size: '0.5B-72B', disk: '397 MB' },
+  { name: 'deepseek-coder-v2', description: 'DeepSeek Coder V2 — coding specialist', size: '16B-236B', disk: '8.9 GB' },
+  { name: 'deepseek-r1', description: 'DeepSeek R1 — reasoning model', size: '1.5B-671B', disk: '1.1 GB' },
+  { name: 'command-r', description: 'Cohere Command R — RAG optimized', size: '35B', disk: '20 GB' },
+  { name: 'starcoder2', description: 'BigCode StarCoder2 — code generation', size: '3B-15B', disk: '1.7 GB' },
+  { name: 'nomic-embed-text', description: 'Nomic Embed — text embeddings', size: '137M', disk: '274 MB' },
+  { name: 'llava', description: 'LLaVA — multimodal vision+language', size: '7B-34B', disk: '4.7 GB' },
+  { name: 'dolphin-mixtral', description: 'Dolphin Mixtral — uncensored MoE', size: '8x7B', disk: '26 GB' },
+  { name: 'neural-chat', description: 'Intel Neural Chat — fine-tuned for chat', size: '7B', disk: '4.1 GB' },
+  { name: 'solar', description: 'Upstage Solar — merged architecture', size: '10.7B', disk: '6.1 GB' },
+  { name: 'vicuna', description: 'Vicuna — fine-tuned LLaMA for chat', size: '7B-33B', disk: '3.8 GB' },
+  { name: 'nous-hermes2', description: 'Nous Hermes 2 — general purpose', size: '7B-34B', disk: '4.1 GB' },
+  { name: 'yi', description: 'Yi — bilingual open model by 01.AI', size: '6B-34B', disk: '3.5 GB' }
 ];
 
 function getOllamaBaseUrl(providerId) {

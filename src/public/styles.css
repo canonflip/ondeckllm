@@ -1321,8 +1321,13 @@ input[type="password"]:focus {
   font-size: 11px;
   color: var(--text-muted);
   font-family: 'SF Mono', Monaco, monospace;
-  min-width: 60px;
+  min-width: 120px;
   text-align: right;
+}
+
+.ollama-disk-size {
+  color: var(--accent);
+  font-weight: 500;
 }
 
 .ollama-model-actions {

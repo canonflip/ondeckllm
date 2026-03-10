@@ -1294,7 +1294,7 @@ function renderOllamaLibrary() {
             <div class="ollama-model-info">
               <span class="ollama-model-name">${m.name}</span>
               <span class="ollama-model-desc">${m.description}</span>
-              <span class="ollama-model-meta">${m.size}</span>
+              <span class="ollama-model-meta">${m.size}${m.disk ? ` · <span class="ollama-disk-size">${m.disk}</span>` : ''}</span>
             </div>
             <div class="ollama-model-actions" id="ollama-action-${m.name.replace(/[^a-z0-9]/gi, '-')}">
               ${installed ? '<span class="ollama-installed-badge">Installed</span>' :
