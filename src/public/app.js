@@ -23,8 +23,11 @@ async function init() {
   renderWelcomeBanner();
   renderProviders();
   renderRouter();
+  renderOllamaModels();
   renderProfiles();
   renderSupport();
+  // Auto-test all configured providers in background
+  autoTestProviders();
 }
 
 // ── Navigation ──
@@ -131,6 +134,20 @@ function renderProviders() {
   }
 }
 
+function getHealthIndicator(info) {
+  if (!info.configured) return '';
+  if (info.lastTestOk === null) {
+    return '<span class="health-dot health-yellow" title="Not tested yet"></span>';
+  }
+  if (!info.lastTestOk) {
+    return `<span class="health-dot health-red" title="Last test failed"></span>`;
+  }
+  if (info.lastLatency > 2000) {
+    return `<span class="health-dot health-yellow" title="Slow: ${info.lastLatency}ms"></span> <span class="health-latency slow">${info.lastLatency}ms</span>`;
+  }
+  return `<span class="health-dot health-green" title="Healthy: ${info.lastLatency}ms"></span> <span class="health-latency">${info.lastLatency}ms</span>`;
+}
+
 function createProviderCard(id, info) {
   const card = document.createElement('div');
   card.className = 'card';
@@ -142,6 +159,7 @@ function createProviderCard(id, info) {
   }[statusClass] || statusClass;
 
   const discoveredBadge = info.autoDiscovered ? '<span class="auto-discovered-badge">AUTO</span>' : '';
+  const healthIndicator = getHealthIndicator(info);
 
   card.innerHTML = `
     <div class="card-header">
@@ -151,7 +169,10 @@ function createProviderCard(id, info) {
         ${info.local ? '<span class="model-tag">LOCAL</span>' : ''}
         ${discoveredBadge}
       </div>
-      <span class="status-badge ${statusClass}">${statusClass === 'active' ? '\u2714 ' : ''}${statusLabel}</span>
+      <div class="card-status-area">
+        <span class="health-indicator">${healthIndicator}</span>
+        <span class="status-badge ${statusClass}">${statusClass === 'active' ? '\u2714 ' : ''}${statusLabel}</span>
+      </div>
     </div>
     <div class="provider-config">
       ${info.local ? renderLocalProviderForm(id, info) : renderCloudProviderForm(id, info)}
@@ -566,8 +587,9 @@ function renderSupport() {
         ${renderProviderSignupCard('Groq', '#f55036', 'https://groq.com', 'Ultra-fast inference')}
         ${renderProviderSignupCard('Mistral', '#ff7000', 'https://mistral.ai', 'Mistral Large, Codestral')}
         ${renderProviderSignupCard('DeepSeek', '#5b6ee1', 'https://deepseek.com', 'DeepSeek Chat & Coder')}
-        ${renderProviderSignupCard('Together', '#6e56cf', 'https://together.ai', 'Open-source model hosting')}
+        ${renderProviderSignupCard('Together AI', '#6e56cf', 'https://together.ai', 'Open-source model hosting')}
         ${renderProviderSignupCard('Ollama', '#ffffff', 'https://ollama.com', 'Run models locally — free')}
+        ${renderProviderSignupCard('OpenRouter', '#c084fc', 'https://openrouter.ai', 'Unified API for 100+ models')}
       </div>
     </div>
     <div class="support-footer">
@@ -588,6 +610,226 @@ function renderProviderSignupCard(name, color, url, desc) {
     </a>
   `;
 }
+
+// ══════════════════════════════════════
+// ── Auto Health Test
+// ══════════════════════════════════════
+
+async function autoTestProviders() {
+  const hasConfigured = Object.values(providerData).some(p => p.configured);
+  if (!hasConfigured) return;
+  try {
+    await api('/providers/test-all', { method: 'POST' });
+    await loadProviders();
+    renderProviders();
+  } catch { /* silent background test */ }
+}
+
+// ══════════════════════════════════════
+// ── Ollama Model Browser
+// ══════════════════════════════════════
+
+let ollamaInstalledModels = [];
+let ollamaLibrary = [];
+let ollamaSource = 'ollama';
+let activePulls = {};
+
+async function loadOllamaModels() {
+  const [installed, library] = await Promise.all([
+    api(`/ollama/models?source=${ollamaSource}`),
+    api('/ollama/library')
+  ]);
+  ollamaInstalledModels = installed.models || [];
+  ollamaLibrary = library.models || [];
+}
+
+function renderOllamaModels() {
+  const page = $('#page-ollama');
+
+  // Check if remote-ollama is configured
+  const remoteConfigured = providerData['remote-ollama']?.configured;
+  const remoteUrl = providerData['remote-ollama']?.baseUrl || '';
+
+  page.innerHTML = `
+    <div class="page-header">
+      <h1>Ollama Models</h1>
+      <p>Browse, pull, and manage models on your Ollama instance</p>
+    </div>
+    <div class="ollama-source-bar">
+      <div class="ollama-source-tabs">
+        <button class="ollama-tab${ollamaSource === 'ollama' ? ' active' : ''}" onclick="switchOllamaSource('ollama')">
+          <span class="prov-dot" style="background:#fff"></span> Local Ollama
+        </button>
+        ${remoteConfigured ? `
+          <button class="ollama-tab${ollamaSource === 'remote-ollama' ? ' active' : ''}" onclick="switchOllamaSource('remote-ollama')">
+            <span class="prov-dot" style="background:#a78bfa"></span> Remote Ollama
+          </button>
+        ` : ''}
+      </div>
+      ${remoteConfigured && remoteUrl ? `<span class="ollama-source-url">${remoteUrl}</span>` : ''}
+    </div>
+    <div id="ollama-installed"></div>
+    <div id="ollama-library"></div>
+  `;
+
+  loadOllamaModels().then(() => {
+    renderOllamaInstalled();
+    renderOllamaLibrary();
+  }).catch(() => {
+    $('#ollama-installed').innerHTML = `<div class="ollama-empty">Could not connect to Ollama. Make sure the service is running.</div>`;
+  });
+}
+
+function formatBytes(bytes) {
+  if (!bytes) return '—';
+  const gb = bytes / (1024 * 1024 * 1024);
+  if (gb >= 1) return gb.toFixed(1) + ' GB';
+  const mb = bytes / (1024 * 1024);
+  return mb.toFixed(0) + ' MB';
+}
+
+function renderOllamaInstalled() {
+  const container = $('#ollama-installed');
+  container.innerHTML = `
+    <div class="ollama-section-header">
+      <h2>Installed Models</h2>
+      <span class="ollama-count">${ollamaInstalledModels.length} model${ollamaInstalledModels.length !== 1 ? 's' : ''}</span>
+      <button class="btn btn-sm btn-secondary" onclick="refreshOllamaModels()" style="margin-left:auto;">Refresh</button>
+    </div>
+    ${ollamaInstalledModels.length === 0 ? '<div class="ollama-empty">No models installed. Pull one from the library below.</div>' : ''}
+    <div class="ollama-model-list">
+      ${ollamaInstalledModels.map(m => `
+        <div class="ollama-model-row">
+          <div class="ollama-model-info">
+            <span class="ollama-model-name">${m.name}</span>
+            <span class="ollama-model-meta">${formatBytes(m.size)}</span>
+            <span class="ollama-model-meta">${m.modified_at ? new Date(m.modified_at).toLocaleDateString() : ''}</span>
+          </div>
+          <button class="btn btn-sm btn-danger" onclick="deleteOllamaModel('${m.name}')">Delete</button>
+        </div>
+      `).join('')}
+    </div>
+  `;
+}
+
+function renderOllamaLibrary() {
+  const container = $('#ollama-library');
+  const installedNames = new Set(ollamaInstalledModels.map(m => m.name.split(':')[0]));
+
+  container.innerHTML = `
+    <div class="ollama-section-header" style="margin-top:32px;">
+      <h2>Model Library</h2>
+      <span class="ollama-count">${ollamaLibrary.length} available</span>
+    </div>
+    <div class="ollama-model-list">
+      ${ollamaLibrary.map(m => {
+        const installed = installedNames.has(m.name);
+        const pulling = activePulls[m.name];
+        return `
+          <div class="ollama-model-row">
+            <div class="ollama-model-info">
+              <span class="ollama-model-name">${m.name}</span>
+              <span class="ollama-model-desc">${m.description}</span>
+              <span class="ollama-model-meta">${m.size}</span>
+            </div>
+            <div class="ollama-model-actions" id="ollama-action-${m.name.replace(/[^a-z0-9]/gi, '-')}">
+              ${installed ? '<span class="ollama-installed-badge">Installed</span>' :
+                pulling ? `<div class="ollama-progress"><div class="ollama-progress-bar" style="width:${pulling}%"></div><span>${pulling}%</span></div>` :
+                `<button class="btn btn-sm btn-primary" onclick="pullOllamaModel('${m.name}')">Pull</button>`}
+            </div>
+          </div>
+        `;
+      }).join('')}
+    </div>
+  `;
+}
+
+window.switchOllamaSource = function(source) {
+  ollamaSource = source;
+  renderOllamaModels();
+};
+
+window.refreshOllamaModels = async function() {
+  await loadOllamaModels();
+  renderOllamaInstalled();
+  renderOllamaLibrary();
+  toast('Models refreshed', 'info');
+};
+
+window.deleteOllamaModel = async function(name) {
+  if (!confirm(`Delete model "${name}"?`)) return;
+  const result = await api('/ollama/delete', { method: 'DELETE', body: { model: name, source: ollamaSource } });
+  if (result.ok) {
+    toast(`Deleted ${name}`, 'success');
+    await loadOllamaModels();
+    renderOllamaInstalled();
+    renderOllamaLibrary();
+  } else {
+    toast(`Error: ${result.error}`, 'error');
+  }
+};
+
+window.pullOllamaModel = async function(name) {
+  const safeId = name.replace(/[^a-z0-9]/gi, '-');
+  const actionEl = document.getElementById(`ollama-action-${safeId}`);
+  if (!actionEl) return;
+
+  activePulls[name] = 0;
+  actionEl.innerHTML = `<div class="ollama-progress"><div class="ollama-progress-bar" id="pull-bar-${safeId}" style="width:0%"></div><span id="pull-text-${safeId}">Starting...</span></div>`;
+
+  try {
+    const resp = await fetch('/api/ollama/pull', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ model: name, source: ollamaSource })
+    });
+
+    const reader = resp.body.getReader();
+    const decoder = new TextDecoder();
+    let buffer = '';
+
+    while (true) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      buffer += decoder.decode(value, { stream: true });
+      const lines = buffer.split('\n');
+      buffer = lines.pop();
+      for (const line of lines) {
+        if (!line.startsWith('data: ')) continue;
+        try {
+          const data = JSON.parse(line.slice(6));
+          if (data.error) {
+            toast(`Error pulling ${name}: ${data.error}`, 'error');
+            delete activePulls[name];
+            actionEl.innerHTML = `<button class="btn btn-sm btn-primary" onclick="pullOllamaModel('${name}')">Pull</button>`;
+            return;
+          }
+          if (data.total && data.completed) {
+            const pct = Math.round((data.completed / data.total) * 100);
+            activePulls[name] = pct;
+            const bar = document.getElementById(`pull-bar-${safeId}`);
+            const txt = document.getElementById(`pull-text-${safeId}`);
+            if (bar) bar.style.width = pct + '%';
+            if (txt) txt.textContent = pct + '%';
+          } else if (data.status) {
+            const txt = document.getElementById(`pull-text-${safeId}`);
+            if (txt) txt.textContent = data.status.slice(0, 30);
+          }
+        } catch { /* skip */ }
+      }
+    }
+
+    delete activePulls[name];
+    toast(`Pulled ${name} successfully`, 'success');
+    await loadOllamaModels();
+    renderOllamaInstalled();
+    renderOllamaLibrary();
+  } catch (err) {
+    delete activePulls[name];
+    toast(`Error pulling ${name}: ${err.message}`, 'error');
+    actionEl.innerHTML = `<button class="btn btn-sm btn-primary" onclick="pullOllamaModel('${name}')">Pull</button>`;
+  }
+};
 
 // ── Boot ──
 init();

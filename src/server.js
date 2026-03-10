@@ -63,7 +63,7 @@ const PROVIDER_META = {
     name: 'Mistral', color: '#ff7000',
     testUrl: 'https://api.mistral.ai/v1/models',
     authHeader: key => ({ Authorization: `Bearer ${key}` }),
-    models: ['mistral-large-latest', 'mistral-medium-latest', 'mistral-small-latest', 'codestral-latest']
+    models: ['mistral-large-latest', 'mistral-medium-latest', 'mistral-small-latest', 'codestral-latest', 'open-mistral-nemo', 'mistral-embed']
   },
   deepseek: {
     name: 'DeepSeek', color: '#5b6ee1',
@@ -72,16 +72,16 @@ const PROVIDER_META = {
     models: ['deepseek-chat', 'deepseek-coder', 'deepseek-reasoner']
   },
   together: {
-    name: 'Together', color: '#6e56cf',
+    name: 'Together AI', color: '#6e56cf',
     testUrl: 'https://api.together.xyz/v1/models',
     authHeader: key => ({ Authorization: `Bearer ${key}` }),
-    models: ['meta-llama/Meta-Llama-3.1-405B-Instruct-Turbo', 'mistralai/Mixtral-8x22B-Instruct-v0.1']
+    models: ['meta-llama/Meta-Llama-3.1-405B-Instruct-Turbo', 'meta-llama/Meta-Llama-3.1-70B-Instruct-Turbo', 'mistralai/Mixtral-8x22B-Instruct-v0.1', 'Qwen/Qwen2.5-72B-Instruct-Turbo', 'deepseek-ai/DeepSeek-R1']
   },
   openrouter: {
     name: 'OpenRouter', color: '#c084fc',
     testUrl: 'https://openrouter.ai/api/v1/models',
     authHeader: key => ({ Authorization: `Bearer ${key}` }),
-    models: ['openai/gpt-4o', 'anthropic/claude-opus-4-6', 'google/gemini-2.0-pro']
+    models: ['openai/gpt-4o', 'anthropic/claude-opus-4-6', 'google/gemini-2.0-pro', 'meta-llama/llama-3.1-405b-instruct', 'mistralai/mistral-large']
   }
 };
 
@@ -148,7 +148,7 @@ async function runAutoDiscovery() {
   // Probe local Ollama
   for (const endpoint of [
     { id: 'ollama', url: 'http://localhost:11434/api/tags', name: 'Ollama (Local)' },
-    { id: 'ollama-remote', url: 'http://localhost:11434/api/tags', name: 'Remote Ollama' }
+    { id: 'remote-ollama', url: 'http://localhost:11434/api/tags', name: 'Remote Ollama' }
   ]) {
     try {
       const resp = await fetch(endpoint.url, { signal: AbortSignal.timeout(3000) });
@@ -202,7 +202,11 @@ app.get('/api/providers', (req, res) => {
       configured: !!saved,
       status: saved?.status || 'unconfigured',
       apiKey: saved?.apiKey ? '••••' + saved.apiKey.slice(-4) : null,
-      autoDiscovered: saved?.autoDiscovered || false
+      autoDiscovered: saved?.autoDiscovered || false,
+      lastTestOk: saved?.lastTestOk ?? null,
+      lastLatency: saved?.lastLatency ?? null,
+      lastTestedAt: saved?.lastTestedAt ?? null,
+      baseUrl: saved?.baseUrl ?? null
     };
   }
   res.json(result);
@@ -232,15 +236,22 @@ app.post('/api/providers/:id/test', async (req, res) => {
   const saved = config.providers[id];
   const apiKey = saved?.apiKey || '';
 
+  // For remote-ollama, use the stored baseUrl for the test
+  let testUrl = typeof meta.testUrl === 'function' ? meta.testUrl(apiKey) : meta.testUrl;
+  if (id === 'remote-ollama' && saved?.baseUrl) {
+    testUrl = saved.baseUrl.replace(/\/+$/, '') + '/api/tags';
+  }
+
+  const startTime = Date.now();
   try {
-    const url = typeof meta.testUrl === 'function' ? meta.testUrl(apiKey) : meta.testUrl;
     const headers = { 'Content-Type': 'application/json', ...meta.authHeader(apiKey) };
     const method = meta.testMethod || 'GET';
     const fetchOpts = { method, headers, signal: AbortSignal.timeout(10000) };
     if (method === 'POST' && meta.testBody) {
       fetchOpts.body = JSON.stringify(meta.testBody);
     }
-    const resp = await fetch(url, fetchOpts);
+    const resp = await fetch(testUrl, fetchOpts);
+    const latency = Date.now() - startTime;
 
     if (resp.ok || (id === 'anthropic' && resp.status < 500)) {
       // For Ollama endpoints, refresh model list
@@ -253,19 +264,205 @@ app.post('/api/providers/:id/test', async (req, res) => {
           }
         } catch { /* ignore */ }
       }
-      const data = { ...saved, status: 'active', lastTestedAt: new Date().toISOString() };
+      const data = { ...saved, status: 'active', lastTestedAt: new Date().toISOString(), lastTestOk: true, lastLatency: latency };
       setProvider(id, data);
-      res.json({ ok: true, status: 'active', message: 'Connection successful' });
+      res.json({ ok: true, status: 'active', message: 'Connection successful', latency });
     } else {
       const text = await resp.text().catch(() => '');
-      const data = { ...saved, status: 'error', lastTestedAt: new Date().toISOString() };
+      const latencyFail = Date.now() - startTime;
+      const data = { ...saved, status: 'error', lastTestedAt: new Date().toISOString(), lastTestOk: false, lastLatency: latencyFail };
       setProvider(id, data);
-      res.json({ ok: false, status: 'error', message: `HTTP ${resp.status}: ${text.slice(0, 200)}` });
+      res.json({ ok: false, status: 'error', message: `HTTP ${resp.status}: ${text.slice(0, 200)}`, latency: latencyFail });
     }
   } catch (err) {
-    const data = { ...saved, status: 'error', lastTestedAt: new Date().toISOString() };
+    const latency = Date.now() - startTime;
+    const data = { ...saved, status: 'error', lastTestedAt: new Date().toISOString(), lastTestOk: false, lastLatency: latency };
     setProvider(id, data);
-    res.json({ ok: false, status: 'error', message: err.message });
+    res.json({ ok: false, status: 'error', message: err.message, latency });
+  }
+});
+
+// ── Auto-test all configured providers (background health check) ──
+
+app.post('/api/providers/test-all', async (req, res) => {
+  const config = loadConfig();
+  const results = {};
+
+  const tests = Object.entries(config.providers).map(async ([id, saved]) => {
+    const meta = PROVIDER_META[id];
+    if (!meta) return;
+    const apiKey = saved?.apiKey || '';
+
+    let testUrl = typeof meta.testUrl === 'function' ? meta.testUrl(apiKey) : meta.testUrl;
+    if (id === 'remote-ollama' && saved?.baseUrl) {
+      testUrl = saved.baseUrl.replace(/\/+$/, '') + '/api/tags';
+    }
+
+    const startTime = Date.now();
+    try {
+      const headers = { 'Content-Type': 'application/json', ...meta.authHeader(apiKey) };
+      const method = meta.testMethod || 'GET';
+      const fetchOpts = { method, headers, signal: AbortSignal.timeout(10000) };
+      if (method === 'POST' && meta.testBody) {
+        fetchOpts.body = JSON.stringify(meta.testBody);
+      }
+      const resp = await fetch(testUrl, fetchOpts);
+      const latency = Date.now() - startTime;
+      const ok = resp.ok || (id === 'anthropic' && resp.status < 500);
+
+      if (ok && (id === 'ollama' || id === 'remote-ollama') && resp.ok) {
+        try {
+          const data = await resp.clone().json();
+          const models = (data.models || []).map(m => m.name);
+          if (models.length > 0) {
+            PROVIDER_META[id].models = [...new Set([...PROVIDER_META[id].models, ...models])];
+          }
+        } catch { /* ignore */ }
+      }
+
+      results[id] = { ok, latency, lastTestOk: ok, lastLatency: latency };
+      setProvider(id, { ...saved, status: ok ? 'active' : 'error', lastTestedAt: new Date().toISOString(), lastTestOk: ok, lastLatency: latency });
+    } catch {
+      const latency = Date.now() - startTime;
+      results[id] = { ok: false, latency, lastTestOk: false, lastLatency: latency };
+      setProvider(id, { ...saved, status: 'error', lastTestedAt: new Date().toISOString(), lastTestOk: false, lastLatency: latency });
+    }
+  });
+
+  await Promise.allSettled(tests);
+  res.json({ results });
+});
+
+// ── Ollama Model Browser API ──
+
+const OLLAMA_LIBRARY = [
+  { name: 'llama3.2', description: 'Meta Llama 3.2 — latest small & medium models', size: '2B-90B' },
+  { name: 'llama3.1', description: 'Meta Llama 3.1 — flagship open model', size: '8B-405B' },
+  { name: 'codellama', description: 'Code-specialized Llama model', size: '7B-70B' },
+  { name: 'mistral', description: 'Mistral 7B — fast and capable', size: '7B' },
+  { name: 'mixtral', description: 'Mixtral MoE — high quality mixture of experts', size: '8x7B-8x22B' },
+  { name: 'phi3', description: 'Microsoft Phi-3 — small but powerful', size: '3.8B-14B' },
+  { name: 'gemma2', description: 'Google Gemma 2 — efficient open model', size: '2B-27B' },
+  { name: 'qwen2.5', description: 'Alibaba Qwen 2.5 — multilingual powerhouse', size: '0.5B-72B' },
+  { name: 'deepseek-coder-v2', description: 'DeepSeek Coder V2 — coding specialist', size: '16B-236B' },
+  { name: 'deepseek-r1', description: 'DeepSeek R1 — reasoning model', size: '1.5B-671B' },
+  { name: 'command-r', description: 'Cohere Command R — RAG optimized', size: '35B' },
+  { name: 'starcoder2', description: 'BigCode StarCoder2 — code generation', size: '3B-15B' },
+  { name: 'nomic-embed-text', description: 'Nomic Embed — text embeddings', size: '137M' },
+  { name: 'llava', description: 'LLaVA — multimodal vision+language', size: '7B-34B' },
+  { name: 'dolphin-mixtral', description: 'Dolphin Mixtral — uncensored MoE', size: '8x7B' },
+  { name: 'neural-chat', description: 'Intel Neural Chat — fine-tuned for chat', size: '7B' },
+  { name: 'solar', description: 'Upstage Solar — merged architecture', size: '10.7B' },
+  { name: 'vicuna', description: 'Vicuna — fine-tuned LLaMA for chat', size: '7B-33B' },
+  { name: 'nous-hermes2', description: 'Nous Hermes 2 — general purpose', size: '7B-34B' },
+  { name: 'yi', description: 'Yi — bilingual open model by 01.AI', size: '6B-34B' }
+];
+
+function getOllamaBaseUrl(providerId) {
+  if (providerId === 'ollama') return 'http://localhost:11434';
+  const config = loadConfig();
+  const saved = config.providers['remote-ollama'];
+  return (saved?.baseUrl || 'http://localhost:11434').replace(/\/+$/, '');
+}
+
+app.get('/api/ollama/models', async (req, res) => {
+  const source = req.query.source || 'ollama';
+  const baseUrl = getOllamaBaseUrl(source);
+  try {
+    const resp = await fetch(`${baseUrl}/api/tags`, { signal: AbortSignal.timeout(5000) });
+    if (!resp.ok) return res.json({ models: [], error: `HTTP ${resp.status}` });
+    const data = await resp.json();
+    const models = (data.models || []).map(m => ({
+      name: m.name,
+      size: m.size,
+      modified_at: m.modified_at,
+      digest: m.digest,
+      details: m.details || {}
+    }));
+    res.json({ models, source, baseUrl });
+  } catch (err) {
+    res.json({ models: [], error: err.message, source, baseUrl });
+  }
+});
+
+app.get('/api/ollama/library', (req, res) => {
+  res.json({ models: OLLAMA_LIBRARY });
+});
+
+app.post('/api/ollama/pull', async (req, res) => {
+  const { model, source } = req.body;
+  if (!model) return res.status(400).json({ error: 'Model name required' });
+  const baseUrl = getOllamaBaseUrl(source || 'ollama');
+
+  res.setHeader('Content-Type', 'text/event-stream');
+  res.setHeader('Cache-Control', 'no-cache');
+  res.setHeader('Connection', 'keep-alive');
+
+  try {
+    const resp = await fetch(`${baseUrl}/api/pull`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ name: model, stream: true })
+    });
+
+    if (!resp.ok) {
+      res.write(`data: ${JSON.stringify({ error: `HTTP ${resp.status}` })}\n\n`);
+      res.end();
+      return;
+    }
+
+    const reader = resp.body.getReader();
+    const decoder = new TextDecoder();
+    let buffer = '';
+
+    while (true) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      buffer += decoder.decode(value, { stream: true });
+      const lines = buffer.split('\n');
+      buffer = lines.pop();
+      for (const line of lines) {
+        if (line.trim()) {
+          try {
+            const parsed = JSON.parse(line);
+            res.write(`data: ${JSON.stringify(parsed)}\n\n`);
+          } catch { /* skip non-JSON lines */ }
+        }
+      }
+    }
+    if (buffer.trim()) {
+      try {
+        const parsed = JSON.parse(buffer);
+        res.write(`data: ${JSON.stringify(parsed)}\n\n`);
+      } catch { /* skip */ }
+    }
+    res.write(`data: ${JSON.stringify({ status: 'success' })}\n\n`);
+    res.end();
+  } catch (err) {
+    res.write(`data: ${JSON.stringify({ error: err.message })}\n\n`);
+    res.end();
+  }
+});
+
+app.delete('/api/ollama/delete', async (req, res) => {
+  const { model, source } = req.body;
+  if (!model) return res.status(400).json({ error: 'Model name required' });
+  const baseUrl = getOllamaBaseUrl(source || 'ollama');
+
+  try {
+    const resp = await fetch(`${baseUrl}/api/delete`, {
+      method: 'DELETE',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ name: model })
+    });
+    if (resp.ok) {
+      res.json({ ok: true, message: `Deleted ${model}` });
+    } else {
+      const text = await resp.text().catch(() => '');
+      res.json({ ok: false, error: `HTTP ${resp.status}: ${text.slice(0, 200)}` });
+    }
+  } catch (err) {
+    res.json({ ok: false, error: err.message });
   }
 });
 
@@ -320,7 +517,7 @@ async function start() {
 
   app.listen(PORT, '127.0.0.1', () => {
     console.log(`\n  \u250C\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2510`);
-    console.log(`  \u2502    OnDeckLLM v1.1                     \u2502`);
+    console.log(`  \u2502    OnDeckLLM v1.2                     \u2502`);
     console.log(`  \u2502    http://localhost:${PORT}              \u2502`);
     console.log(`  \u2514\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2518\n`);
   });

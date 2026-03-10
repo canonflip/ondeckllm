@@ -1136,6 +1136,248 @@ input[type="password"]:focus {
   text-decoration: underline;
 }
 
+/* ══════════════════════════════════════════
+   ── Health Indicators
+   ══════════════════════════════════════════ */
+
+.card-status-area {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.health-indicator {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+}
+
+.health-dot {
+  display: inline-block;
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  flex-shrink: 0;
+}
+
+.health-dot.health-green {
+  background: var(--green);
+  box-shadow: 0 0 6px rgba(63,185,80,0.5);
+}
+
+.health-dot.health-yellow {
+  background: var(--yellow);
+  box-shadow: 0 0 6px rgba(210,153,34,0.5);
+}
+
+.health-dot.health-red {
+  background: var(--red);
+  box-shadow: 0 0 6px rgba(248,81,73,0.5);
+}
+
+.health-latency {
+  font-size: 11px;
+  color: var(--green);
+  font-family: 'SF Mono', Monaco, monospace;
+  font-weight: 500;
+}
+
+.health-latency.slow {
+  color: var(--yellow);
+}
+
+/* ══════════════════════════════════════════
+   ── Ollama Model Browser
+   ══════════════════════════════════════════ */
+
+.ollama-source-bar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 24px;
+  padding-bottom: 16px;
+  border-bottom: 1px solid var(--border);
+}
+
+.ollama-source-tabs {
+  display: flex;
+  gap: 4px;
+}
+
+.ollama-tab {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 7px 14px;
+  border-radius: var(--radius);
+  font-size: 13px;
+  font-weight: 500;
+  border: 1px solid var(--border);
+  cursor: pointer;
+  transition: all var(--transition);
+  font-family: inherit;
+  background: transparent;
+  color: var(--text-secondary);
+}
+
+.ollama-tab:hover {
+  background: var(--bg-tertiary);
+  color: var(--text-primary);
+}
+
+.ollama-tab.active {
+  background: rgba(245,197,66,0.08);
+  color: var(--gold);
+  border-color: var(--gold-dim);
+}
+
+.ollama-tab .prov-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+}
+
+.ollama-source-url {
+  font-size: 11px;
+  color: var(--text-muted);
+  font-family: 'SF Mono', Monaco, monospace;
+  padding: 3px 8px;
+  background: var(--bg-tertiary);
+  border-radius: 4px;
+}
+
+.ollama-section-header {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  margin-bottom: 12px;
+}
+
+.ollama-section-header h2 {
+  font-size: 16px;
+  font-weight: 600;
+}
+
+.ollama-count {
+  font-size: 11px;
+  color: var(--text-muted);
+  padding: 2px 8px;
+  background: var(--bg-tertiary);
+  border-radius: 10px;
+}
+
+.ollama-model-list {
+  display: flex;
+  flex-direction: column;
+  background: var(--bg-secondary);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-lg);
+  overflow: hidden;
+}
+
+.ollama-model-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 12px 16px;
+  border-bottom: 1px solid rgba(48,54,61,0.5);
+  transition: background var(--transition);
+}
+
+.ollama-model-row:last-child {
+  border-bottom: none;
+}
+
+.ollama-model-row:hover {
+  background: var(--bg-card-hover);
+}
+
+.ollama-model-info {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  flex: 1;
+  min-width: 0;
+}
+
+.ollama-model-name {
+  font-size: 13px;
+  font-weight: 600;
+  font-family: 'SF Mono', Monaco, monospace;
+  color: var(--text-primary);
+  min-width: 140px;
+}
+
+.ollama-model-desc {
+  font-size: 12px;
+  color: var(--text-secondary);
+  flex: 1;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.ollama-model-meta {
+  font-size: 11px;
+  color: var(--text-muted);
+  font-family: 'SF Mono', Monaco, monospace;
+  min-width: 60px;
+  text-align: right;
+}
+
+.ollama-model-actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 100px;
+  justify-content: flex-end;
+}
+
+.ollama-installed-badge {
+  font-size: 10px;
+  padding: 3px 8px;
+  border-radius: 10px;
+  background: rgba(63,185,80,0.12);
+  color: var(--green);
+  font-weight: 500;
+  text-transform: uppercase;
+  letter-spacing: 0.3px;
+}
+
+.ollama-progress {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: 120px;
+}
+
+.ollama-progress .ollama-progress-bar {
+  flex: 1;
+  height: 6px;
+  background: var(--accent-dim);
+  border-radius: 3px;
+  transition: width 200ms ease;
+}
+
+.ollama-progress span {
+  font-size: 10px;
+  color: var(--text-muted);
+  font-family: 'SF Mono', Monaco, monospace;
+  min-width: 45px;
+  text-align: right;
+}
+
+.ollama-empty {
+  text-align: center;
+  padding: 32px 20px;
+  color: var(--text-muted);
+  font-size: 13px;
+  font-style: italic;
+  background: var(--bg-secondary);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-lg);
+}
+
 /* ── Responsive ── */
 @media (max-width: 768px) {
   .sidebar {
