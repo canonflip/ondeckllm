@@ -46,9 +46,9 @@ const PROVIDER_META = {
     local: true,
     models: ['llama3.2', 'codellama', 'mistral', 'mixtral', 'deepseek-coder-v2', 'phi3']
   },
-  kyber: {
-    name: 'Kyber (Remote Ollama)', color: '#a78bfa',
-    testUrl: 'http://192.168.55.80:11434/api/tags',
+  "remote-ollama": {
+    name: 'Remote Ollama', color: '#a78bfa',
+    testUrl: 'http://localhost:11434/api/tags',
     authHeader: () => ({}),
     local: true,
     models: []
@@ -100,21 +100,21 @@ async function runAutoDiscovery() {
     let providerId = ocId;
     if (ocId === 'gemini') providerId = 'google';
 
-    if (providerId === 'kyber') {
-      // Kyber is a remote Ollama - populate its models from openclaw config
+    if (providerId === 'remote-ollama') {
+      // Remote Ollama - populate models from openclaw config - populate its models from openclaw config
       const models = (ocProvider.models || []).map(m => m.id);
       if (models.length > 0) {
-        PROVIDER_META.kyber.models = models;
+        PROVIDER_META["remote-ollama"].models = models;
       }
-      if (!config.providers.kyber) {
-        config.providers.kyber = {
+      if (!config.providers["remote-ollama"]) {
+        config.providers["remote-ollama"] = {
           apiKey: ocProvider.apiKey || '',
           status: 'configured',
           configuredAt: new Date().toISOString(),
           autoDiscovered: true,
           baseUrl: ocProvider.baseUrl
         };
-        discovered.push('Kyber (Remote Ollama)');
+        discovered.push('Remote Ollama');
       }
       continue;
     }
@@ -148,7 +148,7 @@ async function runAutoDiscovery() {
   // Probe local Ollama
   for (const endpoint of [
     { id: 'ollama', url: 'http://localhost:11434/api/tags', name: 'Ollama (Local)' },
-    { id: 'kyber', url: 'http://192.168.55.80:11434/api/tags', name: 'Kyber (Remote Ollama)' }
+    { id: 'ollama-remote', url: 'http://localhost:11434/api/tags', name: 'Remote Ollama' }
   ]) {
     try {
       const resp = await fetch(endpoint.url, { signal: AbortSignal.timeout(3000) });
@@ -244,7 +244,7 @@ app.post('/api/providers/:id/test', async (req, res) => {
 
     if (resp.ok || (id === 'anthropic' && resp.status < 500)) {
       // For Ollama endpoints, refresh model list
-      if ((id === 'ollama' || id === 'kyber') && resp.ok) {
+      if ((id === 'ollama' || id === 'remote-ollama') && resp.ok) {
         try {
           const data = await resp.clone().json();
           const models = (data.models || []).map(m => m.name);
