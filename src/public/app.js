@@ -1094,24 +1094,31 @@ function renderOllamaWizard() {
           <h3>Install Ollama</h3>
           <span class="wizard-status wizard-status-warn">Not Installed</span>
         </div>
-        <p class="wizard-desc">Ollama lets you run LLMs locally. Install it first:</p>
-        <div class="wizard-commands">
-          <div class="wizard-cmd">
-            <span class="wizard-cmd-label">macOS (Homebrew)</span>
-            <div class="wizard-cmd-row">
-              <code>brew install ollama</code>
-              <button class="btn btn-sm btn-secondary" onclick="copyCmd('brew install ollama')">Copy</button>
-            </div>
-          </div>
-          <div class="wizard-cmd">
-            <span class="wizard-cmd-label">Linux / macOS (curl)</span>
-            <div class="wizard-cmd-row">
-              <code>curl -fsSL https://ollama.com/install.sh | sh</code>
-              <button class="btn btn-sm btn-secondary" onclick="copyCmd('curl -fsSL https://ollama.com/install.sh | sh')">Copy</button>
-            </div>
-          </div>
+        <p class="wizard-desc">Ollama lets you run LLMs locally. Install it with one click or copy the command manually:</p>
+        <div style="margin-bottom:16px">
+          <button class="btn btn-primary" id="ollama-install-btn" onclick="installOllama()">⬇ Install Now</button>
+          <button class="btn btn-secondary" onclick="recheckOllamaStatus()" style="margin-left:8px">Re-check Status</button>
         </div>
-        <button class="btn btn-primary" onclick="recheckOllamaStatus()" style="margin-top:12px">Re-check Status</button>
+        <div id="ollama-install-output" class="wizard-install-output" style="display:none"></div>
+        <details class="wizard-manual-install">
+          <summary style="cursor:pointer;color:var(--text-muted);font-size:13px;margin-top:8px">Manual install commands</summary>
+          <div class="wizard-commands" style="margin-top:8px">
+            <div class="wizard-cmd">
+              <span class="wizard-cmd-label">macOS (Homebrew)</span>
+              <div class="wizard-cmd-row">
+                <code>brew install ollama</code>
+                <button class="btn btn-sm btn-secondary" onclick="copyCmd('brew install ollama')">Copy</button>
+              </div>
+            </div>
+            <div class="wizard-cmd">
+              <span class="wizard-cmd-label">Linux / macOS (curl)</span>
+              <div class="wizard-cmd-row">
+                <code>curl -fsSL https://ollama.com/install.sh | sh</code>
+                <button class="btn btn-sm btn-secondary" onclick="copyCmd('curl -fsSL https://ollama.com/install.sh | sh')">Copy</button>
+              </div>
+            </div>
+          </div>
+        </details>
       </div>
     `;
     return;
@@ -1187,6 +1194,59 @@ window.recheckOllamaStatus = async function() {
   await loadOllamaStatus();
   renderOllamaWizard();
   toast('Status refreshed', 'info');
+};
+
+window.installOllama = async function() {
+  const btn = document.getElementById('ollama-install-btn');
+  const output = document.getElementById('ollama-install-output');
+  if (!btn || !output) return;
+
+  btn.innerHTML = '<span class="spinner"></span> Installing...';
+  btn.disabled = true;
+  output.style.display = 'block';
+  output.textContent = 'Starting install...\n';
+
+  try {
+    const resp = await fetch('/api/ollama/install', { method: 'POST' });
+    const reader = resp.body.getReader();
+    const decoder = new TextDecoder();
+    let buffer = '';
+
+    while (true) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      buffer += decoder.decode(value, { stream: true });
+      const lines = buffer.split('\n');
+      buffer = lines.pop();
+      for (const line of lines) {
+        if (line.startsWith('data: ')) {
+          try {
+            const data = JSON.parse(line.slice(6));
+            if (data.output) {
+              output.textContent += data.output;
+              output.scrollTop = output.scrollHeight;
+            }
+            if (data.status === 'success') {
+              toast('Ollama installed! Refreshing...', 'success');
+              setTimeout(async () => {
+                await loadOllamaStatus();
+                renderOllamaWizard();
+              }, 2000);
+            } else if (data.status === 'error') {
+              toast(`Install failed: ${data.message}`, 'error');
+              btn.innerHTML = '⬇ Install Now';
+              btn.disabled = false;
+            }
+          } catch {}
+        }
+      }
+    }
+  } catch (err) {
+    toast(`Install failed: ${err.message}`, 'error');
+    output.textContent += `\nError: ${err.message}`;
+    btn.innerHTML = '⬇ Install Now';
+    btn.disabled = false;
+  }
 };
 
 window.installPack = async function(packId) {

@@ -393,6 +393,45 @@ app.get('/api/ollama/library', (req, res) => {
   res.json({ models: OLLAMA_LIBRARY });
 });
 
+// Install Ollama via brew or curl — streams output as SSE
+app.post('/api/ollama/install', async (req, res) => {
+  const { spawn } = await import('child_process');
+  const os = await import('os');
+
+  res.setHeader('Content-Type', 'text/event-stream');
+  res.setHeader('Cache-Control', 'no-cache');
+  res.setHeader('Connection', 'keep-alive');
+
+  const platform = os.default.platform();
+  let proc;
+
+  // Try brew first on macOS, fall back to curl installer
+  if (platform === 'darwin') {
+    proc = spawn('brew', ['install', 'ollama'], { shell: true });
+  } else {
+    proc = spawn('sh', ['-c', 'curl -fsSL https://ollama.com/install.sh | sh']);
+  }
+
+  const send = (data) => res.write(`data: ${JSON.stringify(data)}\n\n`);
+
+  proc.stdout.on('data', (chunk) => send({ output: chunk.toString() }));
+  proc.stderr.on('data', (chunk) => send({ output: chunk.toString() }));
+
+  proc.on('close', (code) => {
+    if (code === 0) {
+      send({ status: 'success', message: 'Ollama installed successfully' });
+    } else {
+      send({ status: 'error', message: `Install exited with code ${code}` });
+    }
+    res.end();
+  });
+
+  proc.on('error', (err) => {
+    send({ status: 'error', message: err.message });
+    res.end();
+  });
+});
+
 app.post('/api/ollama/pull', async (req, res) => {
   const { model, source } = req.body;
   if (!model) return res.status(400).json({ error: 'Model name required' });
