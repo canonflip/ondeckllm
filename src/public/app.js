@@ -22,12 +22,20 @@ async function init() {
   ]);
   renderWelcomeBanner();
   renderProviders();
+  renderCostTracker();
+  renderCompare();
   renderRouter();
   renderOllamaModels();
   renderProfiles();
   renderSupport();
   // Auto-test all configured providers in background
   autoTestProviders();
+  // Auto-refresh cost tracker every 60s
+  setInterval(() => {
+    if ($('#page-costs').classList.contains('active')) {
+      refreshCostData();
+    }
+  }, 60000);
 }
 
 // ── Navigation ──
@@ -260,6 +268,376 @@ window.removeProvider = async function(id) {
   renderProviders();
   renderWelcomeBanner();
 };
+
+// ══════════════════════════════════════
+// ── Cost Tracker
+// ══════════════════════════════════════
+
+let costSummary = null;
+let costChart = null;
+
+async function loadCostSummary() {
+  costSummary = await api('/usage/summary?range=all');
+}
+
+function formatCost(val) {
+  if (val === 0) return '$0.00';
+  if (val < 0.01) return '<$0.01';
+  return '$' + val.toFixed(2);
+}
+
+function formatTokens(n) {
+  if (!n) return '0';
+  if (n >= 1_000_000) return (n / 1_000_000).toFixed(1) + 'M';
+  if (n >= 1_000) return (n / 1_000).toFixed(1) + 'K';
+  return n.toString();
+}
+
+function costColorClass(dailyCost) {
+  if (dailyCost > 5) return 'cost-red';
+  if (dailyCost > 1) return 'cost-yellow';
+  return 'cost-green';
+}
+
+function renderCostTracker() {
+  const page = $('#page-costs');
+  page.innerHTML = `
+    <div class="page-header">
+      <h1>Cost Tracker</h1>
+      <p>Track LLM spending across all providers</p>
+    </div>
+    <div class="cost-summary-cards" id="cost-summary-cards">
+      <div class="cost-card"><div class="cost-card-label">Today</div><div class="cost-card-value" id="cost-today">--</div></div>
+      <div class="cost-card"><div class="cost-card-label">This Week</div><div class="cost-card-value" id="cost-week">--</div></div>
+      <div class="cost-card"><div class="cost-card-label">This Month</div><div class="cost-card-value" id="cost-month">--</div></div>
+      <div class="cost-card"><div class="cost-card-label">All Time</div><div class="cost-card-value" id="cost-all">--</div></div>
+    </div>
+    <div class="cost-chart-container">
+      <h3>Daily Spend (Last 30 Days)</h3>
+      <div class="cost-chart-wrapper">
+        <canvas id="cost-chart"></canvas>
+      </div>
+    </div>
+    <div class="cost-tables-row">
+      <div class="cost-table-section">
+        <h3>By Provider</h3>
+        <div id="cost-provider-table"></div>
+      </div>
+      <div class="cost-table-section">
+        <h3>By Model</h3>
+        <div id="cost-model-table"></div>
+      </div>
+    </div>
+  `;
+
+  refreshCostData();
+}
+
+async function refreshCostData() {
+  await loadCostSummary();
+  if (!costSummary) return;
+
+  // Summary cards
+  const todayCostVal = costSummary.todayCost || 0;
+  $('#cost-today').textContent = formatCost(todayCostVal);
+  $('#cost-today').className = `cost-card-value ${costColorClass(todayCostVal)}`;
+  $('#cost-week').textContent = formatCost(costSummary.weekCost || 0);
+  $('#cost-month').textContent = formatCost(costSummary.monthCost || 0);
+  $('#cost-all').textContent = formatCost(costSummary.allCost || 0);
+
+  // Chart
+  renderCostChart();
+
+  // Provider table
+  renderProviderCostTable();
+
+  // Model table
+  renderModelCostTable();
+}
+
+function renderCostChart() {
+  const canvas = document.getElementById('cost-chart');
+  if (!canvas || !costSummary?.daily) return;
+
+  const labels = costSummary.daily.map(d => {
+    const date = new Date(d.date + 'T00:00:00');
+    return date.toLocaleDateString('en-US', { month: 'short', day: 'numeric' });
+  });
+  const data = costSummary.daily.map(d => d.cost);
+
+  const colors = data.map(v => {
+    if (v > 5) return 'rgba(248, 81, 73, 0.8)';
+    if (v > 1) return 'rgba(210, 153, 34, 0.8)';
+    return 'rgba(63, 185, 80, 0.8)';
+  });
+
+  if (costChart) {
+    costChart.destroy();
+  }
+
+  if (typeof Chart !== 'undefined') {
+    costChart = new Chart(canvas, {
+      type: 'bar',
+      data: {
+        labels,
+        datasets: [{
+          data,
+          backgroundColor: colors,
+          borderRadius: 4,
+          borderSkipped: false
+        }]
+      },
+      options: {
+        responsive: true,
+        maintainAspectRatio: false,
+        plugins: {
+          legend: { display: false },
+          tooltip: {
+            callbacks: {
+              label: (ctx) => '$' + ctx.parsed.y.toFixed(4)
+            }
+          }
+        },
+        scales: {
+          x: {
+            grid: { color: 'rgba(48,54,61,0.5)' },
+            ticks: { color: '#8b949e', font: { size: 10 }, maxRotation: 45 }
+          },
+          y: {
+            grid: { color: 'rgba(48,54,61,0.5)' },
+            ticks: { color: '#8b949e', callback: v => '$' + v.toFixed(2) },
+            beginAtZero: true
+          }
+        }
+      }
+    });
+  } else {
+    // CSS bars fallback
+    const wrapper = canvas.parentElement;
+    const maxVal = Math.max(...data, 0.01);
+    wrapper.innerHTML = `<div class="css-chart">${data.map((v, i) => `
+      <div class="css-bar-col" title="${labels[i]}: $${v.toFixed(4)}">
+        <div class="css-bar" style="height:${(v/maxVal)*100}%;background:${colors[i]}"></div>
+        <span class="css-bar-label">${labels[i].split(' ')[1] || ''}</span>
+      </div>
+    `).join('')}</div>`;
+  }
+}
+
+function renderProviderCostTable() {
+  const container = $('#cost-provider-table');
+  const providers = Object.entries(costSummary.byProvider || {}).sort((a, b) => b[1].cost - a[1].cost);
+
+  if (providers.length === 0) {
+    container.innerHTML = '<div class="cost-empty">No usage data yet</div>';
+    return;
+  }
+
+  container.innerHTML = `
+    <table class="cost-table">
+      <thead>
+        <tr><th>Provider</th><th>Requests</th><th>Tokens</th><th>Cost</th><th>Avg Latency</th></tr>
+      </thead>
+      <tbody>
+        ${providers.map(([name, d]) => {
+          const color = providerData[name]?.color || '#888';
+          const displayName = providerData[name]?.name || name;
+          return `<tr>
+            <td><span class="prov-dot" style="background:${color}"></span> ${displayName}</td>
+            <td>${d.requests}</td>
+            <td>${formatTokens(d.inputTokens + d.outputTokens)}</td>
+            <td>${formatCost(d.cost)}</td>
+            <td>${d.avgLatency}ms</td>
+          </tr>`;
+        }).join('')}
+      </tbody>
+    </table>
+  `;
+}
+
+function renderModelCostTable() {
+  const container = $('#cost-model-table');
+  const models = Object.entries(costSummary.byModel || {}).sort((a, b) => b[1].cost - a[1].cost);
+
+  if (models.length === 0) {
+    container.innerHTML = '<div class="cost-empty">No usage data yet</div>';
+    return;
+  }
+
+  container.innerHTML = `
+    <table class="cost-table">
+      <thead>
+        <tr><th>Model</th><th>Requests</th><th>Tokens</th><th>Cost</th></tr>
+      </thead>
+      <tbody>
+        ${models.map(([name, d]) => `<tr>
+          <td class="cost-model-name">${name}</td>
+          <td>${d.requests}</td>
+          <td>${formatTokens(d.inputTokens + d.outputTokens)}</td>
+          <td>${formatCost(d.cost)}</td>
+        </tr>`).join('')}
+      </tbody>
+    </table>
+  `;
+}
+
+// ══════════════════════════════════════
+// ── A/B Compare
+// ══════════════════════════════════════
+
+let compareRunning = false;
+
+function getAvailableModels() {
+  const models = [];
+  for (const [pid, prov] of Object.entries(providerData)) {
+    if (!prov.configured) continue;
+    for (const m of prov.models) {
+      models.push({ provider: pid, model: m, label: `${prov.name} / ${m}`, color: prov.color });
+    }
+  }
+  return models;
+}
+
+function renderCompare() {
+  const page = $('#page-compare');
+  const models = getAvailableModels();
+
+  const modelOptions = models.map(m =>
+    `<option value="${m.provider}/${m.model}">${m.label}</option>`
+  ).join('');
+
+  page.innerHTML = `
+    <div class="page-header">
+      <h1>A/B Compare</h1>
+      <p>Send the same prompt to two models and compare results side-by-side</p>
+    </div>
+    <div class="compare-controls">
+      <div class="compare-prompt-area">
+        <label>Prompt</label>
+        <textarea id="compare-prompt" placeholder="Enter your prompt here..." rows="4"></textarea>
+      </div>
+      <div class="compare-selectors">
+        <div class="compare-selector">
+          <label>Model A</label>
+          <select id="compare-model-a">${modelOptions}</select>
+        </div>
+        <div class="compare-vs">VS</div>
+        <div class="compare-selector">
+          <label>Model B</label>
+          <select id="compare-model-b">${models.length > 1 ? modelOptions.replace('selected', '') : modelOptions}</select>
+        </div>
+      </div>
+      <div class="compare-options">
+        <label>Max Tokens: <span id="compare-tokens-val">1024</span></label>
+        <input type="range" id="compare-tokens" min="256" max="4096" step="256" value="1024" oninput="$('#compare-tokens-val').textContent=this.value">
+      </div>
+      <button class="btn btn-primary compare-btn" id="compare-go" onclick="runCompare()">Compare</button>
+    </div>
+    <div id="compare-results"></div>
+  `;
+
+  // Select second option for model B if available
+  if (models.length > 1) {
+    $('#compare-model-b').selectedIndex = 1;
+  }
+}
+
+window.runCompare = async function() {
+  if (compareRunning) return;
+
+  const prompt = $('#compare-prompt').value.trim();
+  if (!prompt) return toast('Enter a prompt', 'error');
+
+  const modelA = $('#compare-model-a').value;
+  const modelB = $('#compare-model-b').value;
+  const maxTokens = parseInt($('#compare-tokens').value, 10);
+
+  compareRunning = true;
+  const btn = $('#compare-go');
+  btn.innerHTML = '<span class="spinner"></span> Comparing...';
+  btn.disabled = true;
+
+  const resultsDiv = $('#compare-results');
+  resultsDiv.innerHTML = '<div class="compare-loading">Sending prompt to both models...</div>';
+
+  try {
+    const result = await api('/compare', {
+      method: 'POST',
+      body: { prompt, modelA, modelB, maxTokens }
+    });
+
+    renderCompareResults(modelA, modelB, result);
+  } catch (err) {
+    resultsDiv.innerHTML = `<div class="cost-empty">Error: ${err.message}</div>`;
+  } finally {
+    compareRunning = false;
+    btn.textContent = 'Compare';
+    btn.disabled = false;
+  }
+};
+
+function renderCompareResults(modelA, modelB, result) {
+  const div = $('#compare-results');
+
+  const a = result.a || {};
+  const b = result.b || {};
+
+  // Winner badges
+  const aFaster = !a.error && !b.error && a.latencyMs < b.latencyMs;
+  const bFaster = !a.error && !b.error && b.latencyMs < a.latencyMs;
+  const aCheaper = !a.error && !b.error && a.cost < b.cost;
+  const bCheaper = !a.error && !b.error && b.cost < a.cost;
+  const aLonger = !a.error && !b.error && (a.response?.length || 0) > (b.response?.length || 0);
+  const bLonger = !a.error && !b.error && (b.response?.length || 0) > (a.response?.length || 0);
+
+  function renderSide(label, data, faster, cheaper, longer) {
+    if (data.error) {
+      return `
+        <div class="compare-result-card compare-error">
+          <div class="compare-result-header"><h3>${label}</h3></div>
+          <div class="compare-result-error">Error: ${data.error}</div>
+        </div>
+      `;
+    }
+
+    const badges = [];
+    if (faster) badges.push('<span class="compare-badge badge-fast">&#x26A1; Faster</span>');
+    if (cheaper) badges.push('<span class="compare-badge badge-cheap">&#x1F4B0; Cheaper</span>');
+    if (longer) badges.push('<span class="compare-badge badge-longer">&#x1F4DD; Longer</span>');
+
+    return `
+      <div class="compare-result-card">
+        <div class="compare-result-header">
+          <h3>${label}</h3>
+          <div class="compare-badges">${badges.join('')}</div>
+        </div>
+        <div class="compare-response-text">${escapeHtml(data.response || '')}</div>
+        <div class="compare-metrics">
+          <div class="compare-metric"><span class="compare-metric-label">Tokens In</span><span>${data.inputTokens || 0}</span></div>
+          <div class="compare-metric"><span class="compare-metric-label">Tokens Out</span><span>${data.outputTokens || 0}</span></div>
+          <div class="compare-metric"><span class="compare-metric-label">Latency</span><span>${data.latencyMs || 0}ms</span></div>
+          <div class="compare-metric"><span class="compare-metric-label">Cost</span><span>${formatCost(data.cost || 0)}</span></div>
+        </div>
+      </div>
+    `;
+  }
+
+  const [provA, ...modA] = modelA.split('/');
+  const [provB, ...modB] = modelB.split('/');
+  const labelA = `${providerData[provA]?.name || provA} / ${modA.join('/')}`;
+  const labelB = `${providerData[provB]?.name || provB} / ${modB.join('/')}`;
+
+  div.innerHTML = `
+    <div class="compare-results-grid">
+      ${renderSide(labelA, a, aFaster, aCheaper, aLonger)}
+      ${renderSide(labelB, b, bFaster, bCheaper, bLonger)}
+    </div>
+  `;
+}
+
+function escapeHtml(str) {
+  return str.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/\n/g, '<br>');
+}
 
 // ══════════════════════════════════════
 // ── Batting Order (Task Router)
@@ -643,6 +1021,18 @@ async function loadOllamaModels() {
   ollamaLibrary = library.models || [];
 }
 
+let ollamaStatus = null;
+let ollamaPacks = [];
+
+async function loadOllamaStatus() {
+  ollamaStatus = await api('/ollama/status');
+}
+
+async function loadOllamaPacks() {
+  const data = await api('/ollama/packs');
+  ollamaPacks = data.packs || [];
+}
+
 function renderOllamaModels() {
   const page = $('#page-ollama');
 
@@ -655,6 +1045,7 @@ function renderOllamaModels() {
       <h1>Ollama Models</h1>
       <p>Browse, pull, and manage models on your Ollama instance</p>
     </div>
+    <div id="ollama-wizard"></div>
     <div class="ollama-source-bar">
       <div class="ollama-source-tabs">
         <button class="ollama-tab${ollamaSource === 'ollama' ? ' active' : ''}" onclick="switchOllamaSource('ollama')">
@@ -672,6 +1063,11 @@ function renderOllamaModels() {
     <div id="ollama-library"></div>
   `;
 
+  // Load wizard data + models in parallel
+  Promise.all([loadOllamaStatus(), loadOllamaPacks()]).then(() => {
+    renderOllamaWizard();
+  }).catch(() => {});
+
   loadOllamaModels().then(() => {
     renderOllamaInstalled();
     renderOllamaLibrary();
@@ -679,6 +1075,174 @@ function renderOllamaModels() {
     $('#ollama-installed').innerHTML = `<div class="ollama-empty">Could not connect to Ollama. Make sure the service is running.</div>`;
   });
 }
+
+function renderOllamaWizard() {
+  const container = $('#ollama-wizard');
+  if (!container) return;
+
+  if (!ollamaStatus) {
+    container.innerHTML = '';
+    return;
+  }
+
+  // Step 1: Status check
+  if (!ollamaStatus.installed) {
+    container.innerHTML = `
+      <div class="wizard-section">
+        <div class="wizard-header">
+          <span class="wizard-step">1</span>
+          <h3>Install Ollama</h3>
+          <span class="wizard-status wizard-status-warn">Not Installed</span>
+        </div>
+        <p class="wizard-desc">Ollama lets you run LLMs locally. Install it first:</p>
+        <div class="wizard-commands">
+          <div class="wizard-cmd">
+            <span class="wizard-cmd-label">macOS (Homebrew)</span>
+            <div class="wizard-cmd-row">
+              <code>brew install ollama</code>
+              <button class="btn btn-sm btn-secondary" onclick="copyCmd('brew install ollama')">Copy</button>
+            </div>
+          </div>
+          <div class="wizard-cmd">
+            <span class="wizard-cmd-label">Linux / macOS (curl)</span>
+            <div class="wizard-cmd-row">
+              <code>curl -fsSL https://ollama.com/install.sh | sh</code>
+              <button class="btn btn-sm btn-secondary" onclick="copyCmd('curl -fsSL https://ollama.com/install.sh | sh')">Copy</button>
+            </div>
+          </div>
+        </div>
+        <button class="btn btn-primary" onclick="recheckOllamaStatus()" style="margin-top:12px">Re-check Status</button>
+      </div>
+    `;
+    return;
+  }
+
+  if (!ollamaStatus.running) {
+    container.innerHTML = `
+      <div class="wizard-section">
+        <div class="wizard-header">
+          <span class="wizard-step">1</span>
+          <h3>Start Ollama</h3>
+          <span class="wizard-status wizard-status-warn">Installed but Not Running</span>
+        </div>
+        <p class="wizard-desc">Ollama is installed but the service isn't running. Start it:</p>
+        <div class="wizard-commands">
+          <div class="wizard-cmd">
+            <div class="wizard-cmd-row">
+              <code>ollama serve</code>
+              <button class="btn btn-sm btn-secondary" onclick="copyCmd('ollama serve')">Copy</button>
+            </div>
+          </div>
+        </div>
+        <button class="btn btn-primary" onclick="recheckOllamaStatus()" style="margin-top:12px">Re-check Status</button>
+      </div>
+    `;
+    return;
+  }
+
+  // Step 2: Running — show packs
+  const installedNames = new Set(ollamaStatus.modelsInstalled.map(m => m.split(':')[0]));
+  const version = ollamaStatus.version ? ` v${ollamaStatus.version}` : '';
+
+  container.innerHTML = `
+    <div class="wizard-section wizard-section-ok">
+      <div class="wizard-header">
+        <span class="wizard-step wizard-step-ok">&#10003;</span>
+        <h3>Ollama Running${version}</h3>
+        <span class="wizard-status wizard-status-ok">${ollamaStatus.modelsInstalled.length} models installed</span>
+      </div>
+      <div class="wizard-packs">
+        <h4>Starter Packs</h4>
+        <p class="wizard-desc">Get started quickly with curated model bundles</p>
+        <div class="wizard-pack-grid">
+          ${ollamaPacks.map(pack => {
+            const allInstalled = pack.models.every(m => installedNames.has(m.split(':')[0]));
+            return `
+              <div class="wizard-pack-card${allInstalled ? ' wizard-pack-done' : ''}">
+                <div class="wizard-pack-icon">${pack.icon}</div>
+                <h4>${pack.name}</h4>
+                <p>${pack.description}</p>
+                <div class="wizard-pack-models">
+                  ${pack.models.map(m => `<span class="model-tag${installedNames.has(m.split(':')[0]) ? ' model-tag-installed' : ''}">${m}</span>`).join('')}
+                </div>
+                <div class="wizard-pack-meta">${pack.totalSize}</div>
+                ${allInstalled
+                  ? '<span class="ollama-installed-badge">All Installed</span>'
+                  : `<button class="btn btn-primary btn-sm" onclick="installPack('${pack.id}')" id="pack-btn-${pack.id}">Install Pack</button>`
+                }
+              </div>
+            `;
+          }).join('')}
+        </div>
+      </div>
+    </div>
+  `;
+}
+
+window.copyCmd = function(text) {
+  navigator.clipboard.writeText(text).then(() => toast('Copied to clipboard', 'success'));
+};
+
+window.recheckOllamaStatus = async function() {
+  await loadOllamaStatus();
+  renderOllamaWizard();
+  toast('Status refreshed', 'info');
+};
+
+window.installPack = async function(packId) {
+  const btn = document.getElementById(`pack-btn-${packId}`);
+  if (!btn) return;
+  btn.innerHTML = '<span class="spinner"></span> Installing...';
+  btn.disabled = true;
+
+  try {
+    const resp = await fetch('/api/ollama/install-pack', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ packId, source: ollamaSource })
+    });
+
+    const reader = resp.body.getReader();
+    const decoder = new TextDecoder();
+    let buffer = '';
+    let currentModel = '';
+
+    while (true) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      buffer += decoder.decode(value, { stream: true });
+      const lines = buffer.split('\n');
+      buffer = lines.pop();
+      for (const line of lines) {
+        if (!line.startsWith('data: ')) continue;
+        try {
+          const data = JSON.parse(line.slice(6));
+          if (data.type === 'start') {
+            currentModel = data.model;
+            btn.innerHTML = `<span class="spinner"></span> ${data.model} (${data.index + 1}/${data.total})`;
+          } else if (data.type === 'progress' && data.total && data.completed) {
+            const pct = Math.round((data.completed / data.total) * 100);
+            btn.innerHTML = `<span class="spinner"></span> ${currentModel} ${pct}%`;
+          } else if (data.type === 'error') {
+            toast(`Error pulling ${data.model}: ${data.error}`, 'error');
+          } else if (data.type === 'complete') {
+            toast('Pack installed successfully!', 'success');
+          }
+        } catch { /* skip */ }
+      }
+    }
+
+    // Refresh everything
+    await Promise.all([loadOllamaStatus(), loadOllamaModels()]);
+    renderOllamaWizard();
+    renderOllamaInstalled();
+    renderOllamaLibrary();
+  } catch (err) {
+    toast(`Error installing pack: ${err.message}`, 'error');
+    btn.textContent = 'Install Pack';
+    btn.disabled = false;
+  }
+};
 
 function formatBytes(bytes) {
   if (!bytes) return '—';

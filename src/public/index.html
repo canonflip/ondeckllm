@@ -5,6 +5,7 @@
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>OnDeckLLM</title>
   <link rel="stylesheet" href="/styles.css">
+  <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
 </head>
 <body>
   <div class="app">
@@ -12,12 +13,20 @@
       <div class="sidebar-brand">
         <img src="/logo.jpg" class="brand-icon-img" alt="OnDeckLLM" style="width:28px;height:28px;border-radius:6px;">
         <span class="brand-text">OnDeckLLM</span>
-        <span class="brand-version">v1.2</span>
+        <span class="brand-version">v1.3</span>
       </div>
       <nav class="sidebar-nav">
         <a href="#providers" class="nav-item active" data-page="providers">
           <span class="nav-icon">&#x2B22;</span>
           <span class="nav-label">Provider Hub</span>
+        </a>
+        <a href="#costs" class="nav-item" data-page="costs">
+          <span class="nav-icon">&#x1F4B0;</span>
+          <span class="nav-label">Cost Tracker</span>
+        </a>
+        <a href="#compare" class="nav-item" data-page="compare">
+          <span class="nav-icon">&#x2694;</span>
+          <span class="nav-label">Compare</span>
         </a>
         <a href="#router" class="nav-item" data-page="router">
           <span class="nav-icon">&#x2116;</span>
@@ -44,6 +53,8 @@
     <main class="main">
       <div id="welcome-banner"></div>
       <div id="page-providers" class="page active"></div>
+      <div id="page-costs" class="page"></div>
+      <div id="page-compare" class="page"></div>
       <div id="page-router" class="page"></div>
       <div id="page-ollama" class="page"></div>
       <div id="page-profiles" class="page"></div>

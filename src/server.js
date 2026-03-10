@@ -6,6 +6,10 @@ import {
   getTaskRoutes, setTaskRoutes, getActiveProfile, setActiveProfile, getProfiles,
   readOpenClawConfig, writeOpenClawConfig
 } from './storage.js';
+import {
+  logUsage, getRawEntries, getUsageSummary, calculateCost, getPricing,
+  importOpenClawSessions
+} from './cost-tracker.js';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = dirname(__filename);
@@ -500,6 +504,330 @@ app.post('/api/profiles/activate', (req, res) => {
   res.json({ ok: true, active: profileId, routes });
 });
 
+// ── Usage / Cost Tracker API ──
+
+app.post('/api/usage/log', (req, res) => {
+  try {
+    const entry = logUsage(req.body);
+    res.json({ ok: true, entry });
+  } catch (err) {
+    res.status(500).json({ ok: false, error: err.message });
+  }
+});
+
+app.get('/api/usage/summary', (req, res) => {
+  const range = req.query.range || 'all';
+  res.json(getUsageSummary(range));
+});
+
+app.get('/api/usage/raw', (req, res) => {
+  const limit = parseInt(req.query.limit || '100', 10);
+  res.json({ entries: getRawEntries(limit) });
+});
+
+app.get('/api/usage/pricing', (req, res) => {
+  res.json(getPricing());
+});
+
+// ── A/B Compare API ──
+
+function buildProviderRequest(providerId, model, prompt, maxTokens) {
+  const config = loadConfig();
+  const saved = config.providers[providerId];
+  const apiKey = saved?.apiKey || '';
+
+  if (providerId === 'anthropic') {
+    return {
+      url: 'https://api.anthropic.com/v1/messages',
+      options: {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'x-api-key': apiKey,
+          'anthropic-version': '2023-06-01'
+        },
+        body: JSON.stringify({
+          model,
+          max_tokens: maxTokens,
+          messages: [{ role: 'user', content: prompt }]
+        })
+      },
+      parseResponse: (data) => ({
+        text: data.content?.[0]?.text || '',
+        inputTokens: data.usage?.input_tokens || 0,
+        outputTokens: data.usage?.output_tokens || 0
+      })
+    };
+  }
+
+  if (providerId === 'google') {
+    return {
+      url: `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${apiKey}`,
+      options: {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          contents: [{ parts: [{ text: prompt }] }],
+          generationConfig: { maxOutputTokens: maxTokens }
+        })
+      },
+      parseResponse: (data) => ({
+        text: data.candidates?.[0]?.content?.parts?.[0]?.text || '',
+        inputTokens: data.usageMetadata?.promptTokenCount || 0,
+        outputTokens: data.usageMetadata?.candidatesTokenCount || 0
+      })
+    };
+  }
+
+  if (providerId === 'ollama' || providerId === 'remote-ollama') {
+    const baseUrl = getOllamaBaseUrl(providerId);
+    return {
+      url: `${baseUrl}/api/chat`,
+      options: {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          model,
+          messages: [{ role: 'user', content: prompt }],
+          stream: false,
+          options: { num_predict: maxTokens }
+        })
+      },
+      parseResponse: (data) => ({
+        text: data.message?.content || '',
+        inputTokens: data.prompt_eval_count || 0,
+        outputTokens: data.eval_count || 0
+      })
+    };
+  }
+
+  // OpenAI-compatible format (openai, groq, mistral, deepseek, together, openrouter)
+  const endpoints = {
+    openai: 'https://api.openai.com/v1/chat/completions',
+    groq: 'https://api.groq.com/openai/v1/chat/completions',
+    mistral: 'https://api.mistral.ai/v1/chat/completions',
+    deepseek: 'https://api.deepseek.com/chat/completions',
+    together: 'https://api.together.xyz/v1/chat/completions',
+    openrouter: 'https://openrouter.ai/api/v1/chat/completions'
+  };
+
+  return {
+    url: endpoints[providerId] || endpoints.openai,
+    options: {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        Authorization: `Bearer ${apiKey}`
+      },
+      body: JSON.stringify({
+        model,
+        max_tokens: maxTokens,
+        messages: [{ role: 'user', content: prompt }]
+      })
+    },
+    parseResponse: (data) => ({
+      text: data.choices?.[0]?.message?.content || '',
+      inputTokens: data.usage?.prompt_tokens || 0,
+      outputTokens: data.usage?.completion_tokens || 0
+    })
+  };
+}
+
+async function runModelRequest(providerId, model, prompt, maxTokens) {
+  const { url, options, parseResponse } = buildProviderRequest(providerId, model, prompt, maxTokens);
+  const startTime = Date.now();
+  const resp = await fetch(url, { ...options, signal: AbortSignal.timeout(60000) });
+  const latencyMs = Date.now() - startTime;
+
+  if (!resp.ok) {
+    const text = await resp.text().catch(() => '');
+    throw new Error(`HTTP ${resp.status}: ${text.slice(0, 300)}`);
+  }
+
+  const data = await resp.json();
+  const parsed = parseResponse(data);
+  const cost = calculateCost(model, parsed.inputTokens, parsed.outputTokens);
+
+  // Log to usage tracker
+  logUsage({ provider: providerId, model, inputTokens: parsed.inputTokens, outputTokens: parsed.outputTokens, cost, latencyMs });
+
+  return {
+    response: parsed.text,
+    inputTokens: parsed.inputTokens,
+    outputTokens: parsed.outputTokens,
+    latencyMs,
+    cost
+  };
+}
+
+app.post('/api/compare', async (req, res) => {
+  const { prompt, modelA, modelB, maxTokens = 1024 } = req.body;
+  if (!prompt || !modelA || !modelB) {
+    return res.status(400).json({ error: 'prompt, modelA, and modelB are required' });
+  }
+
+  // Parse "provider/model" format
+  const [provA, ...modA] = modelA.split('/');
+  const [provB, ...modB] = modelB.split('/');
+  const modelNameA = modA.join('/');
+  const modelNameB = modB.join('/');
+
+  try {
+    const [resultA, resultB] = await Promise.allSettled([
+      runModelRequest(provA, modelNameA, prompt, maxTokens),
+      runModelRequest(provB, modelNameB, prompt, maxTokens)
+    ]);
+
+    res.json({
+      a: resultA.status === 'fulfilled' ? resultA.value : { error: resultA.reason?.message || 'Failed' },
+      b: resultB.status === 'fulfilled' ? resultB.value : { error: resultB.reason?.message || 'Failed' }
+    });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// ── Ollama Setup Wizard API ──
+
+const OLLAMA_PACKS = [
+  {
+    id: 'essentials',
+    name: 'Essentials',
+    description: 'Chat + coding + embeddings — covers the basics',
+    icon: '\u2B50',
+    models: ['llama3.2', 'codellama', 'nomic-embed-text'],
+    totalSize: '~6 GB'
+  },
+  {
+    id: 'privacy',
+    name: 'Privacy Pack',
+    description: 'All local, vision capable — zero cloud dependency',
+    icon: '\uD83D\uDD12',
+    models: ['deepseek-r1', 'codellama', 'llava'],
+    totalSize: '~12 GB'
+  },
+  {
+    id: 'developer',
+    name: 'Developer',
+    description: 'Coding-focused models for software development',
+    icon: '\uD83D\uDCBB',
+    models: ['codellama', 'deepseek-coder-v2', 'qwen2.5'],
+    totalSize: '~15 GB'
+  },
+  {
+    id: 'lightweight',
+    name: 'Lightweight',
+    description: 'Small models for limited RAM systems',
+    icon: '\uD83E\uDEB6',
+    models: ['phi3', 'gemma2:2b'],
+    totalSize: '~4 GB'
+  }
+];
+
+app.get('/api/ollama/status', async (req, res) => {
+  const result = { installed: false, running: false, version: '', modelsInstalled: [] };
+
+  // Check if Ollama is running by probing the API
+  try {
+    const resp = await fetch('http://localhost:11434/api/tags', { signal: AbortSignal.timeout(3000) });
+    if (resp.ok) {
+      result.running = true;
+      result.installed = true;
+      const data = await resp.json();
+      result.modelsInstalled = (data.models || []).map(m => m.name);
+    }
+  } catch { /* not running */ }
+
+  // Try to get version
+  if (result.running) {
+    try {
+      const vResp = await fetch('http://localhost:11434/api/version', { signal: AbortSignal.timeout(3000) });
+      if (vResp.ok) {
+        const vData = await vResp.json();
+        result.version = vData.version || '';
+      }
+    } catch { /* ignore */ }
+  }
+
+  // If not running, check if installed via common paths
+  if (!result.installed) {
+    try {
+      const { execSync } = await import('child_process');
+      execSync('which ollama', { timeout: 3000 });
+      result.installed = true;
+    } catch { /* not installed */ }
+  }
+
+  res.json(result);
+});
+
+app.get('/api/ollama/packs', (req, res) => {
+  res.json({ packs: OLLAMA_PACKS });
+});
+
+app.post('/api/ollama/install-pack', async (req, res) => {
+  const { packId, source } = req.body;
+  const pack = OLLAMA_PACKS.find(p => p.id === packId);
+  if (!pack) return res.status(404).json({ error: 'Pack not found' });
+
+  const baseUrl = getOllamaBaseUrl(source || 'ollama');
+
+  res.setHeader('Content-Type', 'text/event-stream');
+  res.setHeader('Cache-Control', 'no-cache');
+  res.setHeader('Connection', 'keep-alive');
+
+  for (let i = 0; i < pack.models.length; i++) {
+    const model = pack.models[i];
+    res.write(`data: ${JSON.stringify({ type: 'start', model, index: i, total: pack.models.length })}\n\n`);
+
+    try {
+      const pullResp = await fetch(`${baseUrl}/api/pull`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ name: model, stream: true })
+      });
+
+      if (!pullResp.ok) {
+        res.write(`data: ${JSON.stringify({ type: 'error', model, error: `HTTP ${pullResp.status}` })}\n\n`);
+        continue;
+      }
+
+      const reader = pullResp.body.getReader();
+      const decoder = new TextDecoder();
+      let buffer = '';
+
+      while (true) {
+        const { done, value } = await reader.read();
+        if (done) break;
+        buffer += decoder.decode(value, { stream: true });
+        const lines = buffer.split('\n');
+        buffer = lines.pop();
+        for (const line of lines) {
+          if (line.trim()) {
+            try {
+              const parsed = JSON.parse(line);
+              res.write(`data: ${JSON.stringify({ type: 'progress', model, ...parsed })}\n\n`);
+            } catch { /* skip */ }
+          }
+        }
+      }
+      if (buffer.trim()) {
+        try {
+          const parsed = JSON.parse(buffer);
+          res.write(`data: ${JSON.stringify({ type: 'progress', model, ...parsed })}\n\n`);
+        } catch { /* skip */ }
+      }
+
+      res.write(`data: ${JSON.stringify({ type: 'done', model })}\n\n`);
+    } catch (err) {
+      res.write(`data: ${JSON.stringify({ type: 'error', model, error: err.message })}\n\n`);
+    }
+  }
+
+  res.write(`data: ${JSON.stringify({ type: 'complete', packId })}\n\n`);
+  res.end();
+});
+
 // ── Serve frontend ──
 
 app.get('*', (req, res) => {
@@ -515,9 +843,17 @@ async function start() {
     console.log(`  Found ${discoveredProviders.length} provider(s): ${discoveredProviders.join(', ')}`);
   }
 
+  // Import OpenClaw session data for cost tracker
+  try {
+    const importResult = await importOpenClawSessions();
+    if (importResult.imported > 0) {
+      console.log(`  Imported ${importResult.imported} usage entries from OpenClaw sessions`);
+    }
+  } catch { /* silent */ }
+
   app.listen(PORT, '127.0.0.1', () => {
     console.log(`\n  \u250C\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2510`);
-    console.log(`  \u2502    OnDeckLLM v1.2                     \u2502`);
+    console.log(`  \u2502    OnDeckLLM v1.3                     \u2502`);
     console.log(`  \u2502    http://localhost:${PORT}              \u2502`);
     console.log(`  \u2514\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2518\n`);
   });
