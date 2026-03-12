@@ -248,10 +248,29 @@ export function writeOpenClawConfig(lineup) {
     oc.agents.defaults.model.fallbacks = lineup.slice(1).map(r => `${r.provider}:${r.model}`);
 
     writeFileSync(OPENCLAW_CONFIG, JSON.stringify(oc, null, 2));
+
+    // Signal OpenClaw gateway to reload config
+    notifyOpenClawGateway();
+
     return { ok: true };
   } catch (err) {
     return { ok: false, error: err.message };
   }
+}
+
+// Send SIGUSR1 to OpenClaw gateway to hot-reload config
+async function notifyOpenClawGateway() {
+  try {
+    const { execSync } = await import('child_process');
+    const pids = execSync("pgrep -f 'openclaw.*gateway'", { timeout: 3000 }).toString().trim();
+    if (pids) {
+      for (const pid of pids.split('\n')) {
+        if (pid.trim()) {
+          try { process.kill(parseInt(pid.trim()), 'SIGUSR1'); } catch { /* ignore */ }
+        }
+      }
+    }
+  } catch { /* gateway not running or pgrep failed — that's fine */ }
 }
 
 // Parse JSON that might have trailing commas or other JSON5-isms

@@ -900,22 +900,34 @@ function getRankClass(index) {
   return 'rank-n';
 }
 
+function isProviderReachable(providerId) {
+  const prov = providerData[providerId];
+  if (!prov) return false;
+  // Local providers (ollama, remote-ollama) don't need API keys
+  if (prov.local && prov.configured) return prov.status === 'active';
+  // Cloud providers need to be configured with a key
+  return prov.configured && prov.status !== 'error';
+}
+
 function renderLineupEntry(scope, route, index, total) {
   const provColor = providerData[route.provider]?.color || '#888';
   const provName = providerData[route.provider]?.name || route.provider;
   const rankClass = getRankClass(index);
   const roleClass = index === 0 ? 'role-primary' : 'role-fallback';
   const roleLabel = index === 0 ? 'PRIMARY' : `FB #${index}`;
+  const reachable = isProviderReachable(route.provider);
+  const warnBadge = reachable ? '' : '<span class="lineup-warn" title="No API key or provider unreachable">\u26A0\uFE0F</span>';
 
   return `
-    <div class="lineup-entry" draggable="true" data-index="${index}">
+    <div class="lineup-entry${reachable ? '' : ' lineup-unreachable'}" draggable="true" data-index="${index}">
       <span class="drag-handle">\u2982</span>
       <span class="rank-badge ${rankClass}">${index + 1}</span>
       <span class="lineup-provider">
-        <span class="prov-dot" style="background:${provColor};box-shadow:0 0 4px ${provColor}66"></span>
+        <span class="prov-dot" style="background:${reachable ? provColor : '#666'};box-shadow:0 0 4px ${reachable ? provColor + '66' : '#33333366'}"></span>
         <span class="prov-name">${provName}</span>
       </span>
       <span class="lineup-model">${route.model}</span>
+      ${warnBadge}
       <span class="lineup-role ${roleClass}">${roleLabel}</span>
       <button class="lineup-remove" onclick="removeRoute(${index})">&times;</button>
     </div>
@@ -978,7 +990,8 @@ function setupDragDrop(list) {
 
 window.openAddModelModal = function() {
   const existing = globalLineup.map(r => `${r.provider}:${r.model}`);
-  const configured = Object.entries(providerData).filter(([, p]) => p.configured);
+  const reachable = Object.entries(providerData).filter(([pid]) => isProviderReachable(pid));
+  const unreachable = Object.entries(providerData).filter(([pid, p]) => p.configured && !isProviderReachable(pid));
 
   const modalRoot = $('#modal-root');
   modalRoot.innerHTML = `
@@ -986,15 +999,16 @@ window.openAddModelModal = function() {
       <div class="modal">
         <div class="modal-header">
           <h2>Add Model to Batting Order</h2>
-          <p>Select from your configured providers</p>
+          <p>Only providers with working API keys are shown</p>
         </div>
         <div class="modal-body">
-          ${configured.length === 0 ? '<div class="empty-state">No providers configured. Go to Provider Hub first.</div>' : ''}
-          ${configured.map(([pid, prov]) => `
+          ${reachable.length === 0 ? '<div class="empty-state">No reachable providers. Configure API keys in the Provider Hub first.</div>' : ''}
+          ${reachable.map(([pid, prov]) => `
             <div class="modal-provider-section">
               <div class="modal-provider-header">
                 <span class="prov-dot" style="background:${prov.color}"></span>
                 ${prov.name}
+                <span class="provider-status-dot active" title="Connected"></span>
               </div>
               <div class="modal-model-list">
                 ${prov.models.map(m => {
@@ -1010,6 +1024,20 @@ window.openAddModelModal = function() {
               </div>
             </div>
           `).join('')}
+          ${unreachable.length > 0 ? `
+            <div class="modal-divider">
+              <span>Unavailable (no API key or connection error)</span>
+            </div>
+            ${unreachable.map(([pid, prov]) => `
+              <div class="modal-provider-section unavailable">
+                <div class="modal-provider-header">
+                  <span class="prov-dot" style="background:#666"></span>
+                  <span style="opacity:0.5">${prov.name}</span>
+                  <span class="provider-status-dot error" title="Unreachable">\u26A0\uFE0F</span>
+                </div>
+              </div>
+            `).join('')}
+          ` : ''}
         </div>
         <div class="modal-footer">
           <button class="btn btn-secondary" onclick="closeModal()">Close</button>
