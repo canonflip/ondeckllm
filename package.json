@@ -1,6 +1,6 @@
 {
   "name": "ondeckllm",
-  "version": "1.4.1",
+  "version": "1.4.2",
   "description": "Localhost dashboard for managing LLM providers, model routing, and batting-order fallback chains",
   "type": "module",
   "main": "src/server.js",

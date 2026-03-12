@@ -185,18 +185,18 @@ export function readOpenClawConfig() {
       result.agents = oc.agents?.defaults || {};
       result.auth = oc.auth || {};
 
-      // Read batting order from agents.defaults.model -> globalLineup
+      // Read batting order from agents.defaults.model -> globalLineup (format: provider/model)
       const modelConfig = oc.agents?.defaults?.model;
       if (modelConfig?.primary) {
         const lineup = [];
-        const [prov, ...modelParts] = modelConfig.primary.split(':');
+        const [prov, ...modelParts] = modelConfig.primary.split('/');
         if (prov && modelParts.length > 0) {
-          lineup.push({ provider: prov, model: modelParts.join(':') });
+          lineup.push({ provider: prov, model: modelParts.join('/') });
         }
         for (const fb of (modelConfig.fallbacks || [])) {
-          const [fbProv, ...fbModelParts] = fb.split(':');
+          const [fbProv, ...fbModelParts] = fb.split('/');
           if (fbProv && fbModelParts.length > 0) {
-            lineup.push({ provider: fbProv, model: fbModelParts.join(':') });
+            lineup.push({ provider: fbProv, model: fbModelParts.join('/') });
           }
         }
         result.lineup = lineup;
@@ -241,11 +241,11 @@ export function writeOpenClawConfig(lineup) {
     if (!oc.agents.defaults) oc.agents.defaults = {};
     if (!oc.agents.defaults.model) oc.agents.defaults.model = {};
 
-    // Primary = #1
-    oc.agents.defaults.model.primary = `${lineup[0].provider}:${lineup[0].model}`;
+    // Primary = #1 (format: provider/model)
+    oc.agents.defaults.model.primary = `${lineup[0].provider}/${lineup[0].model}`;
 
-    // Fallbacks = #2+
-    oc.agents.defaults.model.fallbacks = lineup.slice(1).map(r => `${r.provider}:${r.model}`);
+    // Fallbacks = #2+ (format: provider/model)
+    oc.agents.defaults.model.fallbacks = lineup.slice(1).map(r => `${r.provider}/${r.model}`);
 
     writeFileSync(OPENCLAW_CONFIG, JSON.stringify(oc, null, 2));
 
