@@ -196,92 +196,115 @@ export function getUsageSummary(range = 'all') {
   };
 }
 
-// ── OpenClaw Session Import ──
+// ── OpenClaw Session Import (Continuous) ──
+
+const SYNC_STATE_FILE = join(DATA_DIR, 'openclaw-sync-state.json');
+const OPENCLAW_AGENTS_DIR = join(homedir(), '.openclaw', 'agents');
+
+function loadSyncState() {
+  ensureDataDir();
+  if (!existsSync(SYNC_STATE_FILE)) return { files: {} };
+  try {
+    return JSON.parse(readFileSync(SYNC_STATE_FILE, 'utf-8'));
+  } catch { return { files: {} }; }
+}
+
+function saveSyncState(state) {
+  ensureDataDir();
+  writeFileSync(SYNC_STATE_FILE, JSON.stringify(state));
+}
 
 export async function importOpenClawSessions() {
   ensureDataDir();
-
-  // Don't re-import if already done
-  if (existsSync(IMPORT_MARKER)) return { imported: 0, skipped: true };
-
-  if (!existsSync(OPENCLAW_SESSIONS_DIR)) return { imported: 0, error: 'No sessions directory' };
-
+  const state = loadSyncState();
   let imported = 0;
+  let filesScanned = 0;
 
+  // Scan all agent session dirs
+  const agentDirs = [];
   try {
-    const files = readdirSync(OPENCLAW_SESSIONS_DIR);
-    const jsonFiles = files.filter(f => f.endsWith('.json') || f.endsWith('.jsonl'));
+    if (existsSync(OPENCLAW_AGENTS_DIR)) {
+      for (const agent of readdirSync(OPENCLAW_AGENTS_DIR)) {
+        const sessDir = join(OPENCLAW_AGENTS_DIR, agent, 'sessions');
+        if (existsSync(sessDir)) agentDirs.push(sessDir);
+      }
+    }
+  } catch { /* ignore */ }
 
-    for (const file of jsonFiles) {
+  // Also check legacy path
+  if (existsSync(OPENCLAW_SESSIONS_DIR)) agentDirs.push(OPENCLAW_SESSIONS_DIR);
+
+  for (const sessDir of agentDirs) {
+    let files;
+    try { files = readdirSync(sessDir).filter(f => f.endsWith('.jsonl')); } catch { continue; }
+
+    for (const file of files) {
+      const filePath = join(sessDir, file);
+      filesScanned++;
+
+      // Get file size to detect changes
+      let fileSize;
       try {
-        const filePath = join(OPENCLAW_SESSIONS_DIR, file);
-        const raw = readFileSync(filePath, 'utf-8');
+        const { statSync } = await import('fs');
+        fileSize = statSync(filePath).size;
+      } catch { continue; }
 
-        // Try JSONL first (one JSON per line)
-        const lines = raw.trim().split('\n');
+      const prevOffset = state.files[filePath]?.offset || 0;
+      if (fileSize <= prevOffset) continue; // No new data
+
+      // Read only new bytes
+      try {
+        const fd = (await import('fs')).openSync(filePath, 'r');
+        const buf = Buffer.alloc(fileSize - prevOffset);
+        (await import('fs')).readSync(fd, buf, 0, buf.length, prevOffset);
+        (await import('fs')).closeSync(fd);
+
+        const newData = buf.toString('utf-8');
+        const lines = newData.split('\n');
+
         for (const line of lines) {
+          if (!line.trim()) continue;
           try {
             const data = JSON.parse(line);
+            // Only process assistant messages with usage data
+            if (data.type !== 'message') continue;
+            const msg = data.message;
+            if (!msg || msg.role !== 'assistant' || !msg.usage) continue;
 
-            // OpenClaw session format — look for usage/token data
-            if (data.usage || data.tokenUsage || data.tokens) {
-              const usage = data.usage || data.tokenUsage || data.tokens || {};
-              const inputTokens = usage.input_tokens || usage.inputTokens || usage.prompt_tokens || 0;
-              const outputTokens = usage.output_tokens || usage.outputTokens || usage.completion_tokens || 0;
+            const usage = msg.usage;
+            const inputTokens = usage.input || usage.input_tokens || 0;
+            const outputTokens = usage.output || usage.output_tokens || 0;
+            const cacheRead = usage.cacheRead || 0;
+            const cacheWrite = usage.cacheWrite || 0;
 
-              if (inputTokens > 0 || outputTokens > 0) {
-                const model = data.model || data.modelId || 'unknown';
-                const provider = data.provider || guessProvider(model);
-                const ts = data.timestamp ? new Date(data.timestamp).getTime() :
-                           data.createdAt ? new Date(data.createdAt).getTime() :
-                           data.ts || Date.now();
+            if (inputTokens === 0 && outputTokens === 0 && cacheRead === 0 && cacheWrite === 0) continue;
 
-                logUsage({
-                  ts,
-                  provider,
-                  model,
-                  inputTokens,
-                  outputTokens,
-                  cost: calculateCost(model, inputTokens, outputTokens),
-                  latencyMs: data.latencyMs || data.latency || 0
-                });
-                imported++;
-              }
-            }
+            const model = msg.model || 'unknown';
+            const provider = msg.provider || guessProvider(model);
+            const cost = usage.cost?.total ?? calculateCost(model, inputTokens, outputTokens);
+            const ts = data.timestamp ? new Date(data.timestamp).getTime() : Date.now();
 
-            // Also check for nested message arrays with usage
-            if (Array.isArray(data.messages)) {
-              for (const msg of data.messages) {
-                if (msg.usage) {
-                  const inputTokens = msg.usage.input_tokens || msg.usage.prompt_tokens || 0;
-                  const outputTokens = msg.usage.output_tokens || msg.usage.completion_tokens || 0;
-                  if (inputTokens > 0 || outputTokens > 0) {
-                    const model = msg.model || data.model || 'unknown';
-                    const provider = msg.provider || data.provider || guessProvider(model);
-                    logUsage({
-                      ts: msg.timestamp ? new Date(msg.timestamp).getTime() : Date.now(),
-                      provider,
-                      model,
-                      inputTokens,
-                      outputTokens,
-                      cost: calculateCost(model, inputTokens, outputTokens),
-                      latencyMs: msg.latencyMs || 0
-                    });
-                    imported++;
-                  }
-                }
-              }
-            }
+            logUsage({
+              ts,
+              provider,
+              model,
+              inputTokens: inputTokens + cacheRead + cacheWrite,
+              outputTokens,
+              cost,
+              latencyMs: 0,
+              source: 'openclaw'
+            });
+            imported++;
           } catch { /* skip unparseable lines */ }
         }
+
+        state.files[filePath] = { offset: fileSize, lastSync: Date.now() };
       } catch { /* skip unreadable files */ }
     }
-  } catch { /* sessions dir read error */ }
+  }
 
-  // Mark as imported
-  writeFileSync(IMPORT_MARKER, new Date().toISOString());
-
-  return { imported, skipped: false };
+  saveSyncState(state);
+  return { imported, filesScanned, totalTracked: Object.keys(state.files).length };
 }
 
 function guessProvider(model) {

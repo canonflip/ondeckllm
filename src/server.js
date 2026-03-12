@@ -3,8 +3,9 @@ import { fileURLToPath } from 'url';
 import { dirname, join } from 'path';
 import {
   loadConfig, saveConfig, setProvider, removeProvider,
-  getTaskRoutes, setTaskRoutes, getActiveProfile, setActiveProfile, getProfiles,
-  readOpenClawConfig, writeOpenClawConfig
+  getGlobalLineup, setGlobalLineup, getActiveProfile, setActiveProfile, getProfiles,
+  getProviderOrder, setProviderOrder,
+  readOpenClawConfig, writeOpenClawConfig, seedLineupFromOpenClaw
 } from './storage.js';
 import {
   logUsage, getRawEntries, getUsageSummary, calculateCost, getPricing,
@@ -18,7 +19,15 @@ const app = express();
 const PORT = parseInt(process.env.PORT || '3903', 10);
 
 app.use(express.json());
-app.use(express.static(join(__dirname, 'public')));
+app.use(express.static(join(__dirname, 'public'), {
+  etag: false,
+  lastModified: false,
+  setHeaders: (res) => {
+    res.setHeader('Cache-Control', 'no-cache, no-store, must-revalidate');
+    res.setHeader('Pragma', 'no-cache');
+    res.setHeader('Expires', '0');
+  }
+}));
 
 // ── Provider Meta ──
 
@@ -231,6 +240,19 @@ app.delete('/api/providers/:id', (req, res) => {
   res.json({ ok: true });
 });
 
+// Save remote-ollama base URL
+app.post('/api/providers/remote-ollama/url', (req, res) => {
+  const { baseUrl } = req.body;
+  if (!baseUrl) return res.status(400).json({ error: 'baseUrl required' });
+  const config = loadConfig();
+  const existing = config.providers['remote-ollama'] || {};
+  const data = { ...existing, baseUrl: baseUrl.replace(/\/+$/, ''), status: 'configured', configuredAt: new Date().toISOString() };
+  setProvider('remote-ollama', data);
+  // Update test URL in meta
+  PROVIDER_META['remote-ollama'].testUrl = baseUrl.replace(/\/+$/, '') + '/api/tags';
+  res.json({ ok: true, baseUrl: data.baseUrl });
+});
+
 app.post('/api/providers/:id/test', async (req, res) => {
   const { id } = req.params;
   const meta = PROVIDER_META[id];
@@ -335,6 +357,31 @@ app.post('/api/providers/test-all', async (req, res) => {
 
   await Promise.allSettled(tests);
   res.json({ results });
+});
+
+// ── Sync OpenClaw Sessions API ──
+
+app.post('/api/usage/sync', async (req, res) => {
+  try {
+    const result = await importOpenClawSessions();
+    res.json({ ok: true, ...result });
+  } catch (err) {
+    res.status(500).json({ ok: false, error: err.message });
+  }
+});
+
+// ── Provider Order API ──
+
+app.get('/api/providers/order', (req, res) => {
+  const order = getProviderOrder();
+  res.json({ order });
+});
+
+app.put('/api/providers/order', (req, res) => {
+  const { order } = req.body;
+  if (!Array.isArray(order)) return res.status(400).json({ error: 'order must be an array' });
+  setProviderOrder(order);
+  res.json({ ok: true, order });
 });
 
 // ── Ollama Model Browser API ──
@@ -515,16 +562,18 @@ app.get('/api/discovery', (req, res) => {
   res.json({ discovered: discoveredProviders });
 });
 
-// ── Task Routes API ──
+// ── Global Lineup API ──
 
 app.get('/api/routes', (req, res) => {
-  res.json(getTaskRoutes());
+  res.json({ lineup: getGlobalLineup() });
 });
 
 app.put('/api/routes', (req, res) => {
-  setTaskRoutes(req.body);
-  // Sync back to OpenClaw config
-  const syncResult = writeOpenClawConfig(req.body);
+  const lineup = req.body.lineup || req.body;
+  if (!Array.isArray(lineup)) return res.status(400).json({ error: 'lineup must be an array' });
+  setGlobalLineup(lineup);
+  // Sync to OpenClaw config
+  const syncResult = lineup.length > 0 ? writeOpenClawConfig(lineup) : { ok: true };
   res.json({ ok: true, synced: syncResult.ok });
 });
 
@@ -537,10 +586,10 @@ app.get('/api/profiles', (req, res) => {
 app.post('/api/profiles/activate', (req, res) => {
   const { profileId } = req.body;
   setActiveProfile(profileId);
-  const routes = getTaskRoutes();
+  const lineup = getGlobalLineup();
   // Sync to OpenClaw on profile activation too
-  writeOpenClawConfig(routes);
-  res.json({ ok: true, active: profileId, routes });
+  if (lineup.length > 0) writeOpenClawConfig(lineup);
+  res.json({ ok: true, active: profileId, lineup });
 });
 
 // ── Usage / Cost Tracker API ──
@@ -882,13 +931,30 @@ async function start() {
     console.log(`  Found ${discoveredProviders.length} provider(s): ${discoveredProviders.join(', ')}`);
   }
 
+  // Seed global lineup from OpenClaw config if ours is empty
+  if (seedLineupFromOpenClaw()) {
+    const lineup = getGlobalLineup();
+    console.log(`  Seeded batting order from OpenClaw: ${lineup.map(r => r.provider + ':' + r.model).join(' > ')}`);
+  }
+
   // Import OpenClaw session data for cost tracker
   try {
     const importResult = await importOpenClawSessions();
     if (importResult.imported > 0) {
       console.log(`  Imported ${importResult.imported} usage entries from OpenClaw sessions`);
     }
-  } catch { /* silent */ }
+    console.log(`  Tracking ${importResult.totalTracked || 0} session files`);
+  } catch (err) { console.log(`  Session import error: ${err.message}`); }
+
+  // Auto-sync every 5 minutes
+  setInterval(async () => {
+    try {
+      const result = await importOpenClawSessions();
+      if (result.imported > 0) {
+        console.log(`  [sync] Imported ${result.imported} new usage entries`);
+      }
+    } catch { /* silent */ }
+  }, 5 * 60 * 1000);
 
   app.listen(PORT, '127.0.0.1', () => {
     console.log(`\n  \u250C\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2510`);

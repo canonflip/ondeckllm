@@ -17,154 +17,58 @@ function ensureDataDir() {
 function getDefaultConfig() {
   return {
     providers: {},
-    taskRoutes: {
-      chat: [],
-      coding: [],
-      images: [],
-      video: [],
-      research: [],
-      data: []
-    },
+    globalLineup: [],
     activeProfile: null,
     profiles: {
       budget: {
         name: 'Budget',
         description: 'Cheapest models first, local fallbacks',
         icon: '\u{1F4B0}',
-        taskRoutes: {
-          chat: [
-            { provider: 'groq', model: 'llama-3.3-70b-versatile' },
-            { provider: 'deepseek', model: 'deepseek-chat' },
-            { provider: 'ollama', model: 'llama3.2' }
-          ],
-          coding: [
-            { provider: 'deepseek', model: 'deepseek-coder' },
-            { provider: 'groq', model: 'llama-3.3-70b-versatile' },
-            { provider: 'ollama', model: 'codellama' }
-          ],
-          images: [
-            { provider: 'openai', model: 'dall-e-2' }
-          ],
-          video: [],
-          research: [
-            { provider: 'groq', model: 'llama-3.3-70b-versatile' },
-            { provider: 'deepseek', model: 'deepseek-chat' }
-          ],
-          data: [
-            { provider: 'deepseek', model: 'deepseek-chat' },
-            { provider: 'groq', model: 'llama-3.3-70b-versatile' }
-          ]
-        }
+        routes: [
+          { provider: 'groq', model: 'llama-3.3-70b-versatile' },
+          { provider: 'deepseek', model: 'deepseek-chat' },
+          { provider: 'ollama', model: 'llama3.2' }
+        ]
       },
       quality: {
         name: 'Quality First',
         description: 'Best models regardless of cost',
         icon: '\u{1F451}',
-        taskRoutes: {
-          chat: [
-            { provider: 'anthropic', model: 'claude-opus-4-6' },
-            { provider: 'openai', model: 'gpt-4o' },
-            { provider: 'google', model: 'gemini-2.0-pro' }
-          ],
-          coding: [
-            { provider: 'anthropic', model: 'claude-opus-4-6' },
-            { provider: 'openai', model: 'o3' },
-            { provider: 'deepseek', model: 'deepseek-coder' }
-          ],
-          images: [
-            { provider: 'openai', model: 'dall-e-3' },
-            { provider: 'google', model: 'imagen-3' }
-          ],
-          video: [
-            { provider: 'google', model: 'veo-2' }
-          ],
-          research: [
-            { provider: 'openai', model: 'o3' },
-            { provider: 'anthropic', model: 'claude-opus-4-6' },
-            { provider: 'google', model: 'gemini-2.0-pro' }
-          ],
-          data: [
-            { provider: 'anthropic', model: 'claude-sonnet-4-5-20250929' },
-            { provider: 'openai', model: 'gpt-4o' }
-          ]
-        }
+        routes: [
+          { provider: 'anthropic', model: 'claude-opus-4-6' },
+          { provider: 'openai', model: 'gpt-4o' },
+          { provider: 'google', model: 'gemini-2.0-pro' }
+        ]
       },
       local: {
         name: 'Local Only',
         description: 'Ollama models only, zero cloud calls',
         icon: '\u{1F3E0}',
-        taskRoutes: {
-          chat: [
-            { provider: 'ollama', model: 'llama3.2' },
-            { provider: 'ollama', model: 'mistral' }
-          ],
-          coding: [
-            { provider: 'ollama', model: 'codellama' },
-            { provider: 'ollama', model: 'deepseek-coder-v2' }
-          ],
-          images: [],
-          video: [],
-          research: [
-            { provider: 'ollama', model: 'llama3.2' },
-            { provider: 'ollama', model: 'mixtral' }
-          ],
-          data: [
-            { provider: 'ollama', model: 'llama3.2' },
-            { provider: 'ollama', model: 'mistral' }
-          ]
-        }
+        routes: [
+          { provider: 'ollama', model: 'llama3.2' },
+          { provider: 'ollama', model: 'codellama' },
+          { provider: 'ollama', model: 'mistral' }
+        ]
       },
       privacy: {
         name: 'Privacy Mode',
         description: 'Local models + CloakClaw proxy for cloud calls',
         icon: '\u{1F512}',
-        taskRoutes: {
-          chat: [
-            { provider: 'ollama', model: 'llama3.2' },
-            { provider: 'ollama', model: 'mistral' }
-          ],
-          coding: [
-            { provider: 'ollama', model: 'codellama' },
-            { provider: 'ollama', model: 'deepseek-coder-v2' }
-          ],
-          images: [],
-          video: [],
-          research: [
-            { provider: 'ollama', model: 'llama3.2' }
-          ],
-          data: [
-            { provider: 'ollama', model: 'llama3.2' }
-          ]
-        }
+        routes: [
+          { provider: 'ollama', model: 'llama3.2' },
+          { provider: 'ollama', model: 'codellama' },
+          { provider: 'ollama', model: 'mistral' }
+        ]
       },
       speed: {
         name: 'Speed Demon',
         description: 'Fastest response times first',
         icon: '\u26A1',
-        taskRoutes: {
-          chat: [
-            { provider: 'groq', model: 'llama-3.3-70b-versatile' },
-            { provider: 'anthropic', model: 'claude-haiku-4-5-20251001' },
-            { provider: 'openai', model: 'gpt-4o-mini' }
-          ],
-          coding: [
-            { provider: 'groq', model: 'llama-3.3-70b-versatile' },
-            { provider: 'anthropic', model: 'claude-haiku-4-5-20251001' },
-            { provider: 'deepseek', model: 'deepseek-coder' }
-          ],
-          images: [
-            { provider: 'openai', model: 'dall-e-3' }
-          ],
-          video: [],
-          research: [
-            { provider: 'groq', model: 'llama-3.3-70b-versatile' },
-            { provider: 'anthropic', model: 'claude-haiku-4-5-20251001' }
-          ],
-          data: [
-            { provider: 'groq', model: 'llama-3.3-70b-versatile' },
-            { provider: 'openai', model: 'gpt-4o-mini' }
-          ]
-        }
+        routes: [
+          { provider: 'groq', model: 'llama-3.3-70b-versatile' },
+          { provider: 'anthropic', model: 'claude-haiku-4-5-20251001' },
+          { provider: 'openai', model: 'gpt-4o-mini' }
+        ]
       }
     }
   };
@@ -181,7 +85,23 @@ export function loadConfig() {
     const raw = readFileSync(CONFIG_FILE, 'utf-8');
     const config = JSON.parse(raw);
     const defaults = getDefaultConfig();
-    return { ...defaults, ...config, profiles: { ...defaults.profiles, ...config.profiles } };
+    const merged = { ...defaults, ...config, profiles: { ...defaults.profiles, ...config.profiles } };
+    // Migrate old per-task taskRoutes to globalLineup
+    if (config.taskRoutes && !config.globalLineup) {
+      const coding = config.taskRoutes.coding || [];
+      if (coding.length > 0) {
+        merged.globalLineup = coding;
+      }
+      delete merged.taskRoutes;
+    }
+    // Migrate old profile taskRoutes to routes
+    for (const [id, profile] of Object.entries(merged.profiles)) {
+      if (profile.taskRoutes && !profile.routes) {
+        merged.profiles[id].routes = profile.taskRoutes.coding || [];
+        delete merged.profiles[id].taskRoutes;
+      }
+    }
+    return merged;
   } catch {
     const defaults = getDefaultConfig();
     writeFileSync(CONFIG_FILE, JSON.stringify(defaults, null, 2));
@@ -212,14 +132,14 @@ export function removeProvider(id) {
   saveConfig(config);
 }
 
-export function getTaskRoutes() {
+export function getGlobalLineup() {
   const config = loadConfig();
-  return config.taskRoutes;
+  return config.globalLineup || [];
 }
 
-export function setTaskRoutes(routes) {
+export function setGlobalLineup(lineup) {
   const config = loadConfig();
-  config.taskRoutes = routes;
+  config.globalLineup = lineup;
   saveConfig(config);
 }
 
@@ -232,7 +152,7 @@ export function setActiveProfile(profileId) {
   const config = loadConfig();
   config.activeProfile = profileId;
   if (profileId && config.profiles[profileId]) {
-    config.taskRoutes = JSON.parse(JSON.stringify(config.profiles[profileId].taskRoutes));
+    config.globalLineup = JSON.parse(JSON.stringify(config.profiles[profileId].routes || []));
   }
   saveConfig(config);
 }
@@ -242,6 +162,17 @@ export function getProfiles() {
   return config.profiles;
 }
 
+export function getProviderOrder() {
+  const config = loadConfig();
+  return config.providerOrder || null;
+}
+
+export function setProviderOrder(order) {
+  const config = loadConfig();
+  config.providerOrder = order;
+  saveConfig(config);
+}
+
 // ── OpenClaw Config Integration ──
 
 export function readOpenClawConfig() {
@@ -249,10 +180,27 @@ export function readOpenClawConfig() {
   try {
     if (existsSync(OPENCLAW_CONFIG)) {
       const raw = readFileSync(OPENCLAW_CONFIG, 'utf-8');
-      const oc = JSON.parse(raw);
+      const oc = parseJsonPermissive(raw);
       result.providers = oc.models?.providers || {};
       result.agents = oc.agents?.defaults || {};
       result.auth = oc.auth || {};
+
+      // Read batting order from agents.defaults.model -> globalLineup
+      const modelConfig = oc.agents?.defaults?.model;
+      if (modelConfig?.primary) {
+        const lineup = [];
+        const [prov, ...modelParts] = modelConfig.primary.split(':');
+        if (prov && modelParts.length > 0) {
+          lineup.push({ provider: prov, model: modelParts.join(':') });
+        }
+        for (const fb of (modelConfig.fallbacks || [])) {
+          const [fbProv, ...fbModelParts] = fb.split(':');
+          if (fbProv && fbModelParts.length > 0) {
+            lineup.push({ provider: fbProv, model: fbModelParts.join(':') });
+          }
+        }
+        result.lineup = lineup;
+      }
     }
   } catch { /* ignore parse errors */ }
 
@@ -266,39 +214,53 @@ export function readOpenClawConfig() {
   return result;
 }
 
-export function writeOpenClawConfig(taskRoutes) {
+// Seed global lineup from OpenClaw config if our lineup is empty
+export function seedLineupFromOpenClaw() {
+  const oc = readOpenClawConfig();
+  if (!oc.lineup || oc.lineup.length === 0) return false;
+  const config = loadConfig();
+  if (config.globalLineup && config.globalLineup.length > 0) return false;
+  config.globalLineup = oc.lineup;
+  saveConfig(config);
+  return true;
+}
+
+export function writeOpenClawConfig(lineup) {
   if (!existsSync(OPENCLAW_CONFIG)) return { ok: false, error: 'openclaw.json not found' };
+  if (!lineup || lineup.length === 0) return { ok: false, error: 'empty lineup' };
 
   try {
     const raw = readFileSync(OPENCLAW_CONFIG, 'utf-8');
-    const oc = JSON.parse(raw);
+    const oc = parseJsonPermissive(raw);
 
     // Create .bak backup
     const bakPath = OPENCLAW_CONFIG + '.bak';
     copyFileSync(OPENCLAW_CONFIG, bakPath);
 
-    // Map coding task routes to agents.defaults.model
-    const codingRoutes = taskRoutes.coding || [];
-    if (codingRoutes.length > 0) {
-      if (!oc.agents) oc.agents = {};
-      if (!oc.agents.defaults) oc.agents.defaults = {};
-      if (!oc.agents.defaults.model) oc.agents.defaults.model = {};
+    if (!oc.agents) oc.agents = {};
+    if (!oc.agents.defaults) oc.agents.defaults = {};
+    if (!oc.agents.defaults.model) oc.agents.defaults.model = {};
 
-      // Primary = #1
-      const primary = codingRoutes[0];
-      oc.agents.defaults.model.primary = `${primary.provider}:${primary.model}`;
+    // Primary = #1
+    oc.agents.defaults.model.primary = `${lineup[0].provider}:${lineup[0].model}`;
 
-      // Fallbacks = #2+
-      if (codingRoutes.length > 1) {
-        oc.agents.defaults.model.fallbacks = codingRoutes.slice(1).map(r => `${r.provider}:${r.model}`);
-      } else {
-        oc.agents.defaults.model.fallbacks = [];
-      }
-    }
+    // Fallbacks = #2+
+    oc.agents.defaults.model.fallbacks = lineup.slice(1).map(r => `${r.provider}:${r.model}`);
 
     writeFileSync(OPENCLAW_CONFIG, JSON.stringify(oc, null, 2));
     return { ok: true };
   } catch (err) {
     return { ok: false, error: err.message };
+  }
+}
+
+// Parse JSON that might have trailing commas or other JSON5-isms
+function parseJsonPermissive(raw) {
+  try {
+    return JSON.parse(raw);
+  } catch {
+    // Strip trailing commas before } or ]
+    const cleaned = raw.replace(/,\s*([\]}])/g, '$1');
+    return JSON.parse(cleaned);
   }
 }
